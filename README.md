@@ -4,5 +4,8 @@
 
 This is a custom component for Home Assistant to integrate Aula. It is very much based on the great work by @JBoye at https://github.com/JBoye/HA-Aula and https://github.com/scaarup/aula. Adding additional features:
 
-- Support for min uddannelse
-- 
+- Support for MinUddannelse (UVData)
+    - Forløb
+    - SSO
+    - Opgaver
+- Bibliotek (Systemmatic A/S)
