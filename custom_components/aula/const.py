@@ -1,12 +1,12 @@
 from collections import namedtuple
 
 STARTUP = """
-                _       
-     /\        | |      
-    /  \  _   _| | __ _ 
+                _
+     /\        | |
+    /  \  _   _| | __ _
    / /\ \| | | | |/ _` |
   / ____ \ |_| | | (_| |
- /_/    \_\__,_|_|\__,_|                                               
+ /_/    \_\__,_|_|\__,_|
 Aula integration, version: %s
 This is a custom integration
 If you have any issues with this you need to open an issue here:
@@ -22,3 +22,4 @@ MEEBOOK_API = "https://app.meebook.com/aulaapi"
 SYSTEMATIC_API = "https://systematic-momo.dk/api/aula"
 CONF_SCHOOLSCHEDULE = "schoolschedule"
 CONF_UGEPLAN = "ugeplan"
+CONF_BIBLIOTEK = "bibliotek"
