@@ -88,6 +88,12 @@ async def async_setup_entry(
         ugeplan = True
     else:
         ugeplan = False
+
+    global bibliotek
+    if config[CONF_BIBLIOTEK]:
+        bibliotek = True
+    else:
+        bibliotek = False
     async_add_entities(entities, update_before_add=True)
 
 
@@ -168,6 +174,16 @@ class AulaSensor(Entity):
         attributes = {}
         # _LOGGER.debug("Dump of ugep_attr: "+str(self._client.ugep_attr))
         # _LOGGER.debug("Dump of ugepnext_attr: "+str(self._client.ugepnext_attr))
+        if bibliotek:
+            if "0019" in self._client.widgets:
+                try:
+                    # daily_info = self._client._daily_overview[str(self._child["id"])]
+                    attributes["bibliotek"] = self._client.loaned_books[
+                        self._child["name"]
+                    ]
+                except:
+                    attributes["bibliotek"] = "Not available"
+
         if ugeplan:
             if "0062" in self._client.widgets:
                 try:

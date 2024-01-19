@@ -10,8 +10,7 @@
             "username": "Unilogin username",
             "password": "Unilogin password",
             "schoolschedule": "Add school schedules as calendar entities?",
-            "ugeplan": "Add ugeplaner as sensor attributes?",
-            "bibliotek": "Add bibliotek as sensor attributes?"
+            "ugeplan": "Add ugeplaner as sensor attributes?"
           },
           "description": "Enter your Unilogin credentials",
           "title": "Authentication"
@@ -34,8 +33,7 @@
         "options": {
           "data": {
             "schoolschedule": "Add school schedules as calendar entities?",
-            "ugeplan": "Add ugeplaner as sensor attributes?",
-            "bibliotek": "Add bibliotek as sensor attributes?"
+            "ugeplan": "Add ugeplaner as sensor attributes?"
           },
           "description": "",
           "title": "Options"
