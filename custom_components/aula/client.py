@@ -372,6 +372,7 @@ class Client:
                 verify=True,
             ).json()
 
+            self.loaned_books = {}
             for loaned_book in books["loans"]:
                 book = {
                     "Title": loaned_book["title"],
