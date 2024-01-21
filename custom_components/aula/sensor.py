@@ -16,6 +16,7 @@ from .const import (
     CONF_SCHOOLSCHEDULE,
     CONF_UGEPLAN,
     CONF_BIBLIOTEK,
+    CONF_MINUDANNELSEFORLOEB,
     DOMAIN,
 )
 
@@ -39,6 +40,7 @@ async def async_setup_entry(
         config[CONF_SCHOOLSCHEDULE],
         config[CONF_UGEPLAN],
         config[CONF_BIBLIOTEK],
+        config[CONF_MINUDANNELSEFORLOEB],
     )
     hass.data[DOMAIN]["client"] = client
 
@@ -94,6 +96,12 @@ async def async_setup_entry(
         bibliotek = True
     else:
         bibliotek = False
+
+    global minuddannelseforloeb
+    if config[CONF_MINUDANNELSEFORLOEB]:
+        minuddannelseforloeb = True
+    else:
+        minuddannelseforloeb = False
     async_add_entities(entities, update_before_add=True)
 
 
@@ -174,6 +182,7 @@ class AulaSensor(Entity):
         attributes = {}
         # _LOGGER.debug("Dump of ugep_attr: "+str(self._client.ugep_attr))
         # _LOGGER.debug("Dump of ugepnext_attr: "+str(self._client.ugepnext_attr))
+        # Bibliotek
         if bibliotek:
             if "0019" in self._client.widgets:
                 try:
@@ -183,6 +192,14 @@ class AulaSensor(Entity):
                     ]
                 except:
                     attributes["bibliotek"] = "Not available"
+
+        # Min Uddannelse Forløb
+        if minuddannelseforloeb:
+            if "0028" in self._client.widgets:
+                try:
+                    attributes["forloeb"] = self._client.forloeb[self._child["name"]]
+                except:
+                    attributes["forloeb"] = "Not available"
 
         if ugeplan:
             if "0062" in self._client.widgets:

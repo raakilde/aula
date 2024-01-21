@@ -14,6 +14,7 @@ from .const import (
     MIN_UDDANNELSE_API,
     MEEBOOK_API,
     SYSTEMATIC_API,
+    CICERO_API,
 )
 from homeassistant.exceptions import ConfigEntryNotReady
 
@@ -28,14 +29,24 @@ class Client:
     widgets = {}
     tokens = {}
     loaned_books = {}
+    forloeb = {}
 
-    def __init__(self, username, password, schoolschedule, ugeplan, bibliotek):
+    def __init__(
+        self,
+        username,
+        password,
+        schoolschedule,
+        ugeplan,
+        bibliotek,
+        minUddannelseForloeb,
+    ):
         self._username = username
         self._password = password
         self._session = None
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
         self._bibliotek = bibliotek
+        self._minUddannelseForloeb = minUddannelseForloeb
 
     def login(self):
         _LOGGER.debug("Logging in")
@@ -353,10 +364,6 @@ class Client:
 
             token = self.get_token("0019")
 
-            #  + "?method=messaging.getMessagesForThread&threadId="
-            #                 + str(threadid)
-            #                 + "&page=0",
-
             books = self._session.get(
                 CICERO_API
                 + "/portal-api/rest/aula/library/status/v3?"
@@ -379,7 +386,7 @@ class Client:
                     "Author": loaned_book["author"],
                     "DueDate": loaned_book["dueDate"],
                     "NumberOfLoans": loaned_book["numberOfLoans"],
-                    "Cover": loaned_book["coverImageUrl"],
+                    "Cover": str(loaned_book["coverImageUrl"]).strip(),
                 }
 
                 if loaned_book["patronDisplayName"] not in self.loaned_books:
@@ -388,6 +395,99 @@ class Client:
                 self.loaned_books[loaned_book["patronDisplayName"]].append(book)
 
         # End of bibliotek
+
+        # Min Uddannelse Forløb:
+        if self._minUddannelseForloeb is True:
+            if len(self.widgets) == 0:
+                self.get_widgets()
+
+            if "0028" not in self.widgets:
+                _LOGGER.error(
+                    "You have enabled min uddannelse forloeb, but we cannot find any matching widgets (0019) in Aula."
+                )
+
+            token = self.get_token("0028")
+            now = datetime.datetime.now() + datetime.timedelta(weeks=1)
+            thisweek = datetime.datetime.now().strftime("%Y-W%W")
+            # nextweek = now.strftime("%Y-W%W")
+
+            children = self._session.get(
+                MIN_UDDANNELSE_API
+                + "/forloeb?"
+                + "assuranceLevel=2"
+                + "&childFilter="
+                + ",".join(self._childuserids)
+                + "&currentWeekNumber="
+                + thisweek
+                + "&institutionFilter="
+                + ",".join(self._institutionProfiles)
+                + "&isMobileApp=false"
+                + "&placement=full"
+                + "&sessionUUID="
+                + self._username
+                + "&userProfile=guardian",
+                headers={"Authorization": token, "accept": "application/json"},
+                verify=True,
+            ).json()["personer"]
+
+            header = {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://www.aula.dk",
+                "Referer": "https://www.aula.dk/",
+                # "Sec-Fetch-Dest": "document",
+                # "Sec-Fetch-Mode": "navigate",
+                # "Sec-Fetch-Site": "cross-site",
+                "Authorization": token,
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15",
+            }
+
+            self.forloeb = {}
+
+            for child in children:
+                data = {
+                    "childFilter": ",".join(self._childuserids),
+                    "currentWeekNumber": thisweek,
+                    "group": "",
+                    "assuranceLevel": "2",
+                    "institutionFilter": ",".join(self._institutionProfiles),
+                    "isMobileApp": "false",
+                    "placement": "narrow",
+                    "sessionUUID": self._username,
+                    "userProfile": "guardian",
+                }
+
+                # Only take the first normally there are only one
+                for task in child["institutioner"][0]["forloeb"]:
+                    # Get description from MinUddannelse
+                    task_description_page = self._session.post(
+                        task["url"], data=data, headers=header, allow_redirects=True
+                    )
+
+                    _html = BeautifulSoup(task_description_page.text, "html.parser")
+                    task_description = _html.find(
+                        "div", {"class": "text-user fr-view"}
+                    ).get_text()
+
+                    # Add entry
+                    entry = {
+                        "Name": task["navn"],
+                        "Url": task["url"],
+                        "Description": task_description,
+                    }
+
+                    if child["navn"] not in self.forloeb:
+                        self.forloeb[child["navn"]] = []
+
+                    self.forloeb[child["navn"]].append(entry)
+
+            # booksa = self._session.get(
+            #     books,
+            #     # headers={"Authorization": token, "accept": "application/json"},
+            #     verify=True,
+            # )
+
+        # End of Min Uddannelse Forløb
 
         # Ugeplaner:
         if self._ugeplan == True:

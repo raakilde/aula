@@ -1,16 +1,23 @@
 import logging
 from typing import Any, Dict, Optional
 
+import voluptuous as vol
+
 from homeassistant import config_entries
-from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
     async_get,
 )
-import voluptuous as vol
 
-from .const import CONF_BIBLIOTEK, CONF_SCHOOLSCHEDULE, CONF_UGEPLAN, DOMAIN
+from .const import (
+    CONF_BIBLIOTEK,
+    CONF_MINUDANNELSEFORLOEB,
+    CONF_SCHOOLSCHEDULE,
+    CONF_UGEPLAN,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,6 +28,7 @@ AUTH_SCHEMA = vol.Schema(
         vol.Optional("schoolschedule"): cv.boolean,
         vol.Optional("ugeplan"): cv.boolean,
         vol.Optional("bibliotek"): cv.boolean,
+        vol.Optional("minuddannelseforloeb"): cv.boolean,
     }
 )
 
@@ -50,6 +58,15 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self.data[CONF_BIBLIOTEK] = False
             else:
                 self.data[CONF_BIBLIOTEK] = user_input.get("bibliotek")
+
+            _LOGGER.debug(user_input.get("minuddannelseforloeb"))
+            if user_input.get("minuddannelseforloeb") == None:
+                self.data[CONF_MINUDANNELSEFORLOEB] = False
+            else:
+                self.data[CONF_MINUDANNELSEFORLOEB] = user_input.get(
+                    "minuddannelseforloeb"
+                )
+
             # This will log password in plain text: _LOGGER.debug(self.data)
             return self.async_create_entry(title="Aula", data=self.data)
 
