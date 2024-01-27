@@ -1,6 +1,7 @@
 """
 Based on https://github.com/JBoye/HA-Aula
 """
+from .minuddannelse import MinUddannelse
 from .const import DOMAIN
 import logging
 from datetime import datetime, timedelta
@@ -17,6 +18,8 @@ from .const import (
     CONF_UGEPLAN,
     CONF_BIBLIOTEK,
     CONF_MINUDANNELSEFORLOEB,
+    CONF_MINUDANNELSEOPGAVELISTE,
+    CONF_MINUDANNELSEUGENOTE,
     DOMAIN,
 )
 
@@ -33,6 +36,7 @@ async def async_setup_entry(
 
     if config_entry.options:
         config.update(config_entry.options)
+
     # from .client import Client
     client = Client(
         config[CONF_USERNAME],
@@ -41,7 +45,10 @@ async def async_setup_entry(
         config[CONF_UGEPLAN],
         config[CONF_BIBLIOTEK],
         config[CONF_MINUDANNELSEFORLOEB],
+        config[CONF_MINUDANNELSEOPGAVELISTE],
+        config[CONF_MINUDANNELSEUGENOTE],
     )
+
     hass.data[DOMAIN]["client"] = client
 
     async def async_update_data():
@@ -102,6 +109,19 @@ async def async_setup_entry(
         minuddannelseforloeb = True
     else:
         minuddannelseforloeb = False
+
+    global minuddannelseopgaveliste
+    if config[CONF_MINUDANNELSEOPGAVELISTE]:
+        minuddannelseopgaveliste = True
+    else:
+        minuddannelseopgaveliste = False
+
+    global minuddannelseugenote
+    if config[CONF_MINUDANNELSEUGENOTE]:
+        minuddannelseugenote = True
+    else:
+        minuddannelseugenote = False
+
     async_add_entities(entities, update_before_add=True)
 
 
@@ -180,8 +200,7 @@ class AulaSensor(Entity):
             "selfDeciderEndTime",
         ]
         attributes = {}
-        # _LOGGER.debug("Dump of ugep_attr: "+str(self._client.ugep_attr))
-        # _LOGGER.debug("Dump of ugepnext_attr: "+str(self._client.ugepnext_attr))
+
         # Bibliotek
         if bibliotek:
             if "0019" in self._client.widgets:
@@ -197,9 +216,31 @@ class AulaSensor(Entity):
         if minuddannelseforloeb:
             if "0028" in self._client.widgets:
                 try:
-                    attributes["forloeb"] = self._client.forloeb[self._child["name"]]
+                    attributes["forloebThisWeek"] = self._client.forloebthisweek[
+                        self._child["name"]
+                    ]
                 except:
-                    attributes["forloeb"] = "Not available"
+                    attributes["forloebThisWeek"] = "Not available"
+
+                try:
+                    attributes["forloebNextWeek"] = self._client.forloebthisweek[
+                        self._child["name"]
+                    ]
+                except:
+                    attributes["forloebNextWeek"] = "Not available"
+
+        # Min Uddannelse uge note
+        if minuddannelseugenote:
+            if "0028" in self._client.widgets:
+                try:
+                    attributes["ugenotethisweek"] = self._client.ugenotethisweek
+                except:
+                    attributes["ugenotethisweek"] = "Not available"
+
+                try:
+                    attributes["ugenotenextweek"] = self._client.ugenotenextweek
+                except:
+                    attributes["ugenotenextweek"] = "Not available"
 
         if ugeplan:
             if "0062" in self._client.widgets:

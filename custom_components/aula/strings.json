@@ -12,7 +12,9 @@
           "schoolschedule": "Add school schedules as calendar entities?",
           "ugeplan": "Add ugeplaner as sensor attributes?",
           "bibliotek": "Add bibliotek as sensor attributes?",
-          "minUddannelseForloeb": "Add min uddannelse forløb as sensor attributes?"
+          "minUddannelseForloeb": "Add min uddannelse forløb as sensor attributes?",
+          "minUddannelseOpgaveListe": "Add min uddannelse opgave liste as sensor attributes?",
+          "minUddannelseUgeNote": "Add min uddannelse uge note as sensor attributes?"
         },
         "description": "Enter your Unilogin credentials...",
         "title": "Authentication"
@@ -22,7 +24,9 @@
           "schoolschedule": "Add school schedules as calendar entities?",
           "ugeplan": "Add ugeplaner as sensor attributes?",
           "bibliotek": "Add bibliotek as sensor attributes?",
-          "minUddannelseForloeb": "Add min uddannelse forløb as sensor attributes?"
+          "minUddannelseForloeb": "Add min uddannelse forløb as sensor attributes?",
+          "minUddannelseOpgaveListe": "Add min uddannelse opgave lsite as sensor attributes?",
+          "minUddannelseUgeNote": "Add min uddannelse uge note as sensor attributes?"
         },
         "description": "",
         "title": "Options"
@@ -47,7 +51,9 @@
           "schoolschedule": "Add school schedules as calendar entities?",
           "ugeplan": "Add ugeplaner as sensor attributes?",
           "bibliotek": "Add bibliotek as sensor attributes?",
-          "minUddannelseForloeb": "Add min uddannelse forløb as sensor attributes?"
+          "minUddannelseForloeb": "Add min uddannelse forløb as sensor attributes?",
+          "minUddannelseOpgaveListe": "Add min uddannelse opgave liste as sensor attributes?",
+          "minUddannelseUgeNote": "Add min uddannelse uge note as sensor attributes?"
         },
         "description": "",
         "title": "Options"

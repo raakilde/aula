@@ -3,10 +3,14 @@ Aula client
 Based on https://github.com/JBoye/HA-Aula
 """
 import logging
+import time
 import requests
 import datetime
 from bs4 import BeautifulSoup
 import json, re
+
+from config.custom_components.aula.minuddannelse import MinUddannelse
+
 from .const import (
     API,
     API_VERSION,
@@ -29,7 +33,10 @@ class Client:
     widgets = {}
     tokens = {}
     loaned_books = {}
-    forloeb = {}
+    forloebthisweek = {}
+    forloebnext = {}
+    ugenotethisweek = {}
+    ugenotenextweek = {}
 
     def __init__(
         self,
@@ -39,6 +46,8 @@ class Client:
         ugeplan,
         bibliotek,
         minUddannelseForloeb,
+        minUddannelseOpgaveListe,
+        minUddannelseUgeNote,
     ):
         self._username = username
         self._password = password
@@ -47,6 +56,11 @@ class Client:
         self._ugeplan = ugeplan
         self._bibliotek = bibliotek
         self._minUddannelseForloeb = minUddannelseForloeb
+        self._minUddannelseOpgaveListe = minUddannelseOpgaveListe
+        self._minUddannelseUgeNote = minUddannelseUgeNote
+        self._minUddannelse = MinUddannelse(
+            minUddannelseForloeb, minUddannelseOpgaveListe, minUddannelseUgeNote
+        )
 
     def login(self):
         _LOGGER.debug("Logging in")
@@ -409,88 +423,96 @@ class Client:
             token = self.get_token("0028")
             now = datetime.datetime.now() + datetime.timedelta(weeks=1)
             thisweek = datetime.datetime.now().strftime("%Y-W%W")
-            # nextweek = now.strftime("%Y-W%W")
-
-            children = self._session.get(
-                MIN_UDDANNELSE_API
-                + "/forloeb?"
-                + "assuranceLevel=2"
-                + "&childFilter="
-                + ",".join(self._childuserids)
-                + "&currentWeekNumber="
-                + thisweek
-                + "&institutionFilter="
-                + ",".join(self._institutionProfiles)
-                + "&isMobileApp=false"
-                + "&placement=full"
-                + "&sessionUUID="
-                + self._username
-                + "&userProfile=guardian",
-                headers={"Authorization": token, "accept": "application/json"},
-                verify=True,
-            ).json()["personer"]
-
-            header = {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Origin": "https://www.aula.dk",
-                "Referer": "https://www.aula.dk/",
-                # "Sec-Fetch-Dest": "document",
-                # "Sec-Fetch-Mode": "navigate",
-                # "Sec-Fetch-Site": "cross-site",
-                "Authorization": token,
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15",
-            }
-
-            self.forloeb = {}
-
-            for child in children:
-                data = {
-                    "childFilter": ",".join(self._childuserids),
-                    "currentWeekNumber": thisweek,
-                    "group": "",
-                    "assuranceLevel": "2",
-                    "institutionFilter": ",".join(self._institutionProfiles),
-                    "isMobileApp": "false",
-                    "placement": "narrow",
-                    "sessionUUID": self._username,
-                    "userProfile": "guardian",
-                }
-
-                # Only take the first normally there are only one
-                for task in child["institutioner"][0]["forloeb"]:
-                    # Get description from MinUddannelse
-                    task_description_page = self._session.post(
-                        task["url"], data=data, headers=header, allow_redirects=True
-                    )
-
-                    _html = BeautifulSoup(task_description_page.text, "html.parser")
-                    task_description = _html.find(
-                        "div", {"class": "text-user fr-view"}
-                    ).get_text()
-
-                    # Add entry
-                    entry = {
-                        "Name": task["navn"],
-                        "Url": task["url"],
-                        "Description": task_description,
-                    }
-
-                    if child["navn"] not in self.forloeb:
-                        self.forloeb[child["navn"]] = []
-
-                    self.forloeb[child["navn"]].append(entry)
-
-            # booksa = self._session.get(
-            #     books,
-            #     # headers={"Authorization": token, "accept": "application/json"},
-            #     verify=True,
-            # )
-
+            nextweek = now.strftime("%Y-W%W")
+            self.forloebthisweek = self._minUddannelse.forloeb(
+                self._session,
+                token,
+                thisweek,
+                self._childuserids,
+                self._institutionProfiles,
+                self._username,
+            )
+            self.forloebnext = self._minUddannelse.forloeb(
+                self._session,
+                token,
+                nextweek,
+                self._childuserids,
+                self._institutionProfiles,
+                self._username,
+            )
         # End of Min Uddannelse Forløb
 
+        # Min Uddannelse Opgave Liste
+        if self._minUddannelseOpgaveListe is True:
+            if len(self.widgets) == 0:
+                self.get_widgets()
+
+            if "0028" not in self.widgets:
+                _LOGGER.error(
+                    "You have enabled min uddannelse forloeb, but we cannot find any matching widgets (0019) in Aula."
+                )
+
+            opgaver = self._session.get(
+                # MIN_UDDANNELSE_API
+                "https://www.minuddannelse.net/api/forloebsafvikling/opgaver/getOpgaveliste?"
+                + "tidspunkt="
+                + "2024-W4&"
+                + "elevId="
+                + "3143794"
+                + "&_="
+                + str(round(time.time())),
+                headers={"accept": "application/json"},
+            ).json()["opgaver"]
+
+        for opgave in opgaver:
+            print(
+                opgave["ugedag"]
+                + " : "
+                + opgave["title"]
+                + " : "
+                + opgave["afleveringsdato"]
+                + " : "
+                # + opgave["placeringTidspunkt"]
+            )
+            # TODO opgave liste kalender
+        # End of Min Uddannelse Opgave Liste
+
+        # Min Uddannelse Uge Note
+        if self._minUddannelseUgeNote is True:
+            if len(self.widgets) == 0:
+                self.get_widgets()
+            if "0028" not in self.widgets:
+                _LOGGER.error(
+                    "You have enabled min uddannelse forloeb, but we cannot find any matching widgets (0019) in Aula."
+                )
+
+            token = self.get_token("0028")
+            now = datetime.datetime.now() + datetime.timedelta(weeks=1)
+            thisweek = datetime.datetime.now().strftime("%Y-W%W")
+            nextweek = now.strftime("%Y-W%W")
+
+            self.ugenotethisweek = self._minUddannelse.ugeBrev(
+                self._session,
+                token,
+                thisweek,
+                self._childuserids,
+                self._institutionProfiles,
+                self._username,
+            )
+
+            self.ugenotenextweek = self._minUddannelse.ugeBrev(
+                self._session,
+                token,
+                nextweek,
+                self._childuserids,
+                self._institutionProfiles,
+                self._username,
+            )
+
+        # End of Min Uddannelse Uge Note
+
         # Ugeplaner:
-        if self._ugeplan == True:
+        if self._ugeplan is True:
             guardian = self._session.get(
                 self.apiurl + "?method=profiles.getProfileContext&portalrole=guardian",
                 verify=True,

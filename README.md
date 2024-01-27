@@ -2,21 +2,17 @@
 
 # Aula
 
-This is a custom component for Home Assistant to integrate Aula. It is very much based on the great work by @JBoye at https://github.com/JBoye/HA-Aula. However this "rewrite" comes with new features like:
+This is a custom component for Home Assistant to integrate Aula. It is very much based on the great work by @scaarup at https://github.com/scaarup/aula. However this "rewrite" comes with new features like:
 
-- Installable and updatable via HACS
-- UI config flow
-- School schedules as Home Assistant calendars
-- "Ugeplaner/Ugenoter" from "Min Uddannelse" and "Meebook"
-- Messages - if there are unread messages, we turn a binary sensor on and populate it with the message details.
-- "Huskelisten" from "Systematic"
+- Supports Min Uddannelse Forløb, ugenoter og skema
+- Supports Systematic A/S Bibliotek
 
   "Ugeplaner/ugenoter/huskelisten" are stored as sensor attributes. Can be rendered like:
 
   ```yaml
   {{ state_attr("sensor.hojelse_skole_emilie", "ugeplan") }}
   ```
-  
+
   And visualized in your dashboard with the markdown card:
 
   ```yaml
@@ -26,7 +22,7 @@ This is a custom component for Home Assistant to integrate Aula. It is very much
   ```
 
   Another example using vertical-stack and collapsable-cards:
-  
+
   ![image](https://user-images.githubusercontent.com/8055470/200306258-1c9e98ff-75d9-4111-994c-a69833e40c61.png)
 
 ```yaml
@@ -51,7 +47,7 @@ cards:
     title: Ugeplan Rasmus, næste uge
     cards:
       - type: markdown
-        content: '{{ state_attr("sensor.hojelse_skole_rasmus", "ugeplan_next") }}' 
+        content: '{{ state_attr("sensor.hojelse_skole_rasmus", "ugeplan_next") }}'
 ```
 
    ![image](https://user-images.githubusercontent.com/8055470/199254249-3bf441bc-7dce-4f5d-a809-d119d20a7b2b.png)

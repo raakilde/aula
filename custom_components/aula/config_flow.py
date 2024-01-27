@@ -13,9 +13,11 @@ from homeassistant.helpers.entity_registry import (
 
 from .const import (
     CONF_BIBLIOTEK,
-    CONF_MINUDANNELSEFORLOEB,
     CONF_SCHOOLSCHEDULE,
     CONF_UGEPLAN,
+    CONF_MINUDANNELSEFORLOEB,
+    CONF_MINUDANNELSEOPGAVELISTE,
+    CONF_MINUDANNELSEUGENOTE,
     DOMAIN,
 )
 
@@ -29,6 +31,8 @@ AUTH_SCHEMA = vol.Schema(
         vol.Optional("ugeplan"): cv.boolean,
         vol.Optional("bibliotek"): cv.boolean,
         vol.Optional("minuddannelseforloeb"): cv.boolean,
+        vol.Optional("minuddannelseopgaveliste"): cv.boolean,
+        vol.Optional("minuddannelseugenote"): cv.boolean,
     }
 )
 
@@ -65,6 +69,22 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 self.data[CONF_MINUDANNELSEFORLOEB] = user_input.get(
                     "minuddannelseforloeb"
+                )
+
+            _LOGGER.debug(user_input.get("minuddannelseopgaveliste"))
+            if user_input.get("minuddannelseopgaveliste") == None:
+                self.data[CONF_MINUDANNELSEOPGAVELISTE] = False
+            else:
+                self.data[CONF_MINUDANNELSEOPGAVELISTE] = user_input.get(
+                    "minuddannelseopgaveliste"
+                )
+
+            _LOGGER.debug(user_input.get("minuddannelseugenote"))
+            if user_input.get("minuddannelseugenote") == None:
+                self.data[CONF_MINUDANNELSEUGENOTE] = False
+            else:
+                self.data[CONF_MINUDANNELSEUGENOTE] = user_input.get(
+                    "minuddannelseugenote"
                 )
 
             # This will log password in plain text: _LOGGER.debug(self.data)
