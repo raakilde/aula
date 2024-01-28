@@ -1,6 +1,4 @@
 {
     "name": "Aula",
-    "country": "DK",
-    "homeassistant": "2022.9.0",
     "render_readme": true
 }
