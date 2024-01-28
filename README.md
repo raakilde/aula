@@ -1,4 +1,4 @@
-[![Current Release](https://img.shields.io/github/release/scaarup/aula/all.svg?style=plastic)](https://github.com/scaarup/aula/releases) [![Github All Releases](https://img.shields.io/github/downloads/scaarup/aula/total.svg?style=plastic)](https://github.com/scaarup/aula/releases) [![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=plastic)](https://github.com/hacs/integration)
+[![Current Release](https://img.shields.io/github/release/raakilde/aula/all.svg?style=plastic)](https://github.com/raakilde/aula/releases) [![Github All Releases](https://img.shields.io/github/downloads/raakilde/aula/total.svg?style=plastic)](https://github.com/raakilde/aula/releases) [![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg?style=plastic)](https://github.com/hacs/integration)
 
 # Aula
 
