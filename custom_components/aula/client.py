@@ -9,7 +9,7 @@ import datetime
 from bs4 import BeautifulSoup
 import json, re
 
-from config.custom_components.aula.minuddannelse import MinUddannelse
+from .minuddannelse import MinUddannelse
 
 from .const import (
     API,
