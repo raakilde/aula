@@ -491,23 +491,29 @@ class Client:
             thisweek = datetime.datetime.now().strftime("%Y-W%W")
             nextweek = now.strftime("%Y-W%W")
 
-            self.ugenotethisweek = self._minUddannelse.ugeBrev(
-                self._session,
-                token,
-                thisweek,
-                self._childuserids,
-                self._institutionProfiles,
-                self._username,
-            )
+            try:
+                self.ugenotethisweek = self._minUddannelse.ugeBrev(
+                    self._session,
+                    token,
+                    thisweek,
+                    self._childuserids,
+                    self._institutionProfiles,
+                    self._username,
+                )
+            except:
+                self.ugenotethisweek = {}
 
-            self.ugenotenextweek = self._minUddannelse.ugeBrev(
-                self._session,
-                token,
-                nextweek,
-                self._childuserids,
-                self._institutionProfiles,
-                self._username,
-            )
+            try:
+                self.ugenotenextweek = self._minUddannelse.ugeBrev(
+                    self._session,
+                    token,
+                    nextweek,
+                    self._childuserids,
+                    self._institutionProfiles,
+                    self._username,
+                )
+            except:
+                self.ugenotenextweek = {}
 
         # End of Min Uddannelse Uge Note
 

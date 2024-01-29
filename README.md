@@ -9,7 +9,7 @@ This is a custom component for Home Assistant to integrate Aula. It is very much
 
   "Ugeplaner/ugenoter/huskelisten" are stored as sensor attributes. Can be rendered like:
 
-  ```yaml
+  ```yamlg
   {{ state_attr("sensor.hojelse_skole_emilie", "ugeplan") }}
   ```
 

@@ -5,7 +5,7 @@
         "http"
     ],
     "codeowners": [
-        "@raakilde"
+        "@scaarup"
     ],
     "config_flow": true,
     "documentation": "https://github.com/raakilde/aula/blob/main/README.md",
@@ -15,5 +15,5 @@
         "beautifulsoup4",
         "lxml"
     ],
-    "version": "0.1.37"
+    "version": "0.1.35"
 }
