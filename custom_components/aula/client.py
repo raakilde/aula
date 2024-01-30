@@ -452,29 +452,25 @@ class Client:
                     "You have enabled min uddannelse forloeb, but we cannot find any matching widgets (0019) in Aula."
                 )
 
-            opgaver = self._session.get(
-                # MIN_UDDANNELSE_API
-                "https://www.minuddannelse.net/api/forloebsafvikling/opgaver/getOpgaveliste?"
-                + "tidspunkt="
-                + "2024-W4&"
-                + "elevId="
-                + "3143794"
-                + "&_="
-                + str(round(time.time())),
-                headers={"accept": "application/json"},
-            ).json()["opgaver"]
-
-        for opgave in opgaver:
-            print(
-                opgave["ugedag"]
-                + " : "
-                + opgave["title"]
-                + " : "
-                + opgave["afleveringsdato"]
-                + " : "
-                # + opgave["placeringTidspunkt"]
+            week = datetime.datetime.now().strftime("%Y-W%W")
+            opgaver = self._minUddannelse.opgaveListe(
+                self._session,
+                token,
+                week,
+                self._childuserids,
+                self._institutionProfiles,
+                self._username,
             )
-            # TODO opgave liste kalender
+
+        # Currently only one student supported
+        try:
+            with open("uddannelseopgaveliste.json", "w") as uddannelseopgaveliste_json:
+                json.dump(opgaver, uddannelseopgaveliste_json)
+        except:
+            _LOGGER.warn(
+                "Got the following reply when trying to fetch calendars: "
+                + str(json.dumps(opgaver))
+            )
         # End of Min Uddannelse Opgave Liste
 
         # Min Uddannelse Uge Note

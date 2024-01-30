@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 import logging, time
+
+from .tasklist import TaskListDevice
 from .const import DOMAIN
 from homeassistant import config_entries, core
 from .const import CONF_SCHOOLSCHEDULE
@@ -14,6 +16,7 @@ _LOGGER = logging.getLogger(__name__)
 MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=10)
 PARALLEL_UPDATES = 1
 
+
 async def async_setup_entry(
     hass: core.HomeAssistant,
     config_entry: config_entries.ConfigEntry,
@@ -23,6 +26,7 @@ async def async_setup_entry(
     if config_entry.options:
         config.update(config_entry.options)
     from .client import Client
+
     if not config[CONF_SCHOOLSCHEDULE] == True:
         return True
     client = hass.data[DOMAIN]["client"]
@@ -31,14 +35,17 @@ async def async_setup_entry(
     for i, child in enumerate(client._children):
         childid = child["id"]
         name = child["name"]
-        calendar_devices.append(CalendarDevice(hass,calendar,name,childid))
+        calendar_devices.append(CalendarDevice(hass, calendar, name, childid))
+        calendar_devices.append(TaskListDevice(hass, calendar, name, childid))
+
     async_add_entities(calendar_devices)
 
+
 class CalendarDevice(CalendarEntity):
-    def __init__(self,hass,calendar,name,childid):
-        self.data = CalendarData(hass,calendar,childid)
+    def __init__(self, hass, calendar, name, childid):
+        self.data = CalendarData(hass, calendar, childid)
         self._cal_data = {}
-        self._name = "Skoleskema "+name
+        self._name = "Skoleskema " + name
         self._childid = childid
 
     @property
@@ -53,20 +60,21 @@ class CalendarDevice(CalendarEntity):
 
     @property
     def unique_id(self):
-        unique_id = "aulacalendar"+str(self._childid)
-        _LOGGER.debug("Unique ID for calendar "+str(self._childid)+" "+unique_id)
+        unique_id = "aulacalendar" + str(self._childid)
+        _LOGGER.debug("Unique ID for calendar " + str(self._childid) + " " + unique_id)
         return unique_id
 
     def update(self):
         """Update all Calendars."""
         self.data.update()
-        
+
     async def async_get_events(self, hass, start_date, end_date):
         """Get all events in a specific time frame."""
         return await self.data.async_get_events(hass, start_date, end_date)
 
+
 class CalendarData:
-    def __init__(self,hass,calendar,childid):
+    def __init__(self, hass, calendar, childid):
         self.event = None
 
         self._hass = hass
@@ -76,10 +84,11 @@ class CalendarData:
         self.all_events = []
         self._client = hass.data[DOMAIN]["client"]
 
-    def parseCalendarData(self,i=None):
+    def parseCalendarData(self, i=None):
         import json
+
         try:
-            with open('skoleskema.json', 'r') as openfile:
+            with open("skoleskema.json", "r") as openfile:
                 _data = json.load(openfile)
             data = json.loads(_data)
         except:
@@ -87,31 +96,36 @@ class CalendarData:
             return False
         events = []
         _LOGGER.debug("Parsing skoleskema.json...")
-        for c in data['data']:
-            if c['type'] == "lesson" and c['belongsToProfiles'][0] == self._childid:
-                summary = c['title']
-                start = datetime.strptime(c['startDateTime'],"%Y-%m-%dT%H:%M:%S%z")
-                end = datetime.strptime(c['endDateTime'],"%Y-%m-%dT%H:%M:%S%z")
+        for c in data["data"]:
+            if c["type"] == "lesson" and c["belongsToProfiles"][0] == self._childid:
+                summary = c["title"]
+                start = datetime.strptime(c["startDateTime"], "%Y-%m-%dT%H:%M:%S%z")
+                end = datetime.strptime(c["endDateTime"], "%Y-%m-%dT%H:%M:%S%z")
                 vikar = 0
-                for p in c['lesson']['participants']:
-                    if p['participantRole'] == 'substituteTeacher':
-                        teacher = "VIKAR: "+p['teacherName']
+                for p in c["lesson"]["participants"]:
+                    if p["participantRole"] == "substituteTeacher":
+                        teacher = "VIKAR: " + p["teacherName"]
                         vikar = 1
                         break
                 if vikar == 0:
                     try:
-                        teacher = c['lesson']['participants'][0]['teacherInitials']
+                        teacher = c["lesson"]["participants"][0]["teacherInitials"]
                     except:
                         try:
-                            _LOGGER.debug("Lesson json dump"+str(c['lesson']))
-                            teacher = c['lesson']['participants'][0]['teacherName']
+                            _LOGGER.debug("Lesson json dump" + str(c["lesson"]))
+                            teacher = c["lesson"]["participants"][0]["teacherName"]
                         except:
-                            _LOGGER.debug("Could not find any teacher information for "+summary+" at "+str(start))
+                            _LOGGER.debug(
+                                "Could not find any teacher information for "
+                                + summary
+                                + " at "
+                                + str(start)
+                            )
                             teacher = ""
                 event = CalendarEvent(
-                    summary=summary+", "+teacher,
-                    start = start,
-                    end = end,
+                    summary=summary + ", " + teacher,
+                    start=start,
+                    end=end,
                 )
                 events.append(event)
         return events

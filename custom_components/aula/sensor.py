@@ -233,12 +233,16 @@ class AulaSensor(Entity):
         if minuddannelseugenote:
             if "0028" in self._client.widgets:
                 try:
-                    attributes["ugenotethisweek"] = self._client.ugenotethisweek
+                    attributes["ugenotethisweek"] = self._client.ugenotethisweek[
+                        self._child["name"]
+                    ]
                 except:
                     attributes["ugenotethisweek"] = "Not available"
 
                 try:
-                    attributes["ugenotenextweek"] = self._client.ugenotenextweek
+                    attributes["ugenotenextweek"] = self._client.ugenotenextweek[
+                        self._child["name"]
+                    ]
                 except:
                     attributes["ugenotenextweek"] = "Not available"
 

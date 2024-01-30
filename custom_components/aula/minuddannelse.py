@@ -141,5 +141,45 @@ class MinUddannelse:
         _html = BeautifulSoup(result, "lxml")
         return _html.getText()
 
-    def opgaveListe(self, session, week):
+    def opgaveListe(
+        self, session, token, week, childuserids, institutionProfiles, username
+    ):
         _LOGGER.debug("Getting Min Uddannelse opgave Liste")
+
+        result = session.get(
+            MIN_UDDANNELSE_API
+            + "/redirect?redirectUrl=https://www.minuddannelse.net?"
+            + "assuranceLevel=2"
+            + "&childFilter="
+            + ",".join(childuserids)
+            + "&currentWeekNumber="
+            + week
+            + "&institutionFilter="
+            + ",".join(institutionProfiles)
+            + "&isMobileApp=false"
+            + "&placement=full"
+            + "&sessionUUID="
+            + username
+            + "&userProfile=guardian",
+            headers={"Authorization": token},
+            verify=True,
+        )
+
+        _html = BeautifulSoup(result.content, "lxml")
+        anchor_element = _html.find("div", {"class": "col-sm-8 col-xs-7"})
+        anchor_element = anchor_element.find("a")
+        elevid = anchor_element.get("href").replace("minuge/", "")
+
+        opgaver = session.get(
+            # MIN_UDDANNELSE_API
+            "https://www.minuddannelse.net/api/forloebsafvikling/opgaver/getOpgaveliste?"
+            + "tidspunkt="
+            + week
+            + "&elevId="
+            + elevid
+            + "&_="
+            + str(round(time.time())),
+            headers={"accept": "application/json"},
+        ).json()["opgaver"]
+
+        return opgaver
