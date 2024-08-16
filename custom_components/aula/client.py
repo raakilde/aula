@@ -182,8 +182,10 @@ class Client:
     def get_widgets(self):
         detected_widgets = self._session.get(
             self.apiurl + "?method=profiles.getProfileContext", verify=True
-        ).json()["data"]["moduleWidgetConfiguration"]["widgetConfigurations"]
-        for widget in detected_widgets:
+        )
+        for widget in detected_widgets.json()["data"]["pageConfiguration"][
+            "widgetConfigurations"
+        ]:
             widgetid = str(widget["widget"]["widgetId"])
             widgetname = widget["widget"]["name"]
             self.widgets[widgetid] = widgetname
