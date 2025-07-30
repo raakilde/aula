@@ -1,6 +1,6 @@
 from collections import namedtuple
 
-STARTUP = """
+STARTUP = r"""
                 _
      /\        | |
     /  \  _   _| | __ _
