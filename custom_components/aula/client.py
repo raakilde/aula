@@ -87,6 +87,11 @@ class Client:
         )
 
         _html = BeautifulSoup(response.text, "lxml")
+        if _html.form is None:
+            _LOGGER.error("Login failed: No form found in response from login.aula.dk")
+            _LOGGER.debug(f"Response status: {response.status_code}, URL: {response.url}")
+            _LOGGER.debug(f"Response text (first 500 chars): {response.text[:500]}")
+            raise ConfigEntryNotReady("Unable to login to Aula - login page structure may have changed")
         _url = _html.form["action"]
         headers = {
             "Host": "broker.unilogin.dk",
@@ -122,6 +127,11 @@ class Client:
         url = ""
         while success == False and redirects < 10:
             html = BeautifulSoup(response.text, "lxml")
+            if html.form is None:
+                _LOGGER.error(f"Login failed: No form found in response (redirect {redirects})")
+                _LOGGER.debug(f"Response status: {response.status_code}, URL: {response.url}")
+                _LOGGER.debug(f"Response text (first 500 chars): {response.text[:500]}")
+                raise ConfigEntryNotReady("Unable to login to Aula - authentication flow may have changed")
             url = html.form["action"]
 
             post_data = {}
