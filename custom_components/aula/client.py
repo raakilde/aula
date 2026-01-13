@@ -205,7 +205,7 @@ class Client:
 
     def update_data(self):
         is_logged_in = False
-        if self._session:
+        if self._session and hasattr(self, 'apiurl'):
             response = self._session.get(
                 self.apiurl + "?method=profiles.getProfilesByLogin", verify=True
             ).json()
