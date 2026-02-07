@@ -1,26 +1,27 @@
 """
 Based on https://github.com/JBoye/HA-Aula
 """
-from .minuddannelse import MinUddannelse
-from .const import DOMAIN
+
 import logging
 from datetime import datetime, timedelta
+
+from homeassistant import config_entries, core
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant import config_entries, core
+
 from .client import Client
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-from homeassistant.const import CONF_USERNAME, CONF_PASSWORD
 from .const import (
-    CONF_SCHOOLSCHEDULE,
-    CONF_UGEPLAN,
+    CONF_AUTH_COOKIES,
     CONF_BIBLIOTEK,
     CONF_MINUDANNELSEFORLOEB,
     CONF_MINUDANNELSEOPGAVELISTE,
     CONF_MINUDANNELSEUGENOTE,
-    DOMAIN,
+    CONF_SCHOOLSCHEDULE,
+    CONF_UGEPLAN,
 )
 
 PARALLEL_UPDATES = 1
@@ -39,14 +40,13 @@ async def async_setup_entry(
 
     # from .client import Client
     client = Client(
-        config[CONF_USERNAME],
-        config[CONF_PASSWORD],
         config[CONF_SCHOOLSCHEDULE],
         config[CONF_UGEPLAN],
         config[CONF_BIBLIOTEK],
         config[CONF_MINUDANNELSEFORLOEB],
         config[CONF_MINUDANNELSEOPGAVELISTE],
         config[CONF_MINUDANNELSEUGENOTE],
+        config.get(CONF_AUTH_COOKIES, {}),
     )
 
     hass.data[DOMAIN]["client"] = client

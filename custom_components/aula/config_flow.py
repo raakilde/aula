@@ -1,23 +1,22 @@
 import logging
 from typing import Any, Dict, Optional
 
-import voluptuous as vol
-
-from homeassistant import config_entries
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
+from homeassistant import config_entries
 from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
     async_get,
 )
 
 from .const import (
+    CONF_AUTH_COOKIES,
     CONF_BIBLIOTEK,
-    CONF_SCHOOLSCHEDULE,
-    CONF_UGEPLAN,
     CONF_MINUDANNELSEFORLOEB,
     CONF_MINUDANNELSEOPGAVELISTE,
     CONF_MINUDANNELSEUGENOTE,
+    CONF_SCHOOLSCHEDULE,
+    CONF_UGEPLAN,
     DOMAIN,
 )
 
@@ -25,8 +24,6 @@ _LOGGER = logging.getLogger(__name__)
 
 AUTH_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_USERNAME): cv.string,
-        vol.Required(CONF_PASSWORD): cv.string,
         vol.Optional("schoolschedule"): cv.boolean,
         vol.Optional("ugeplan"): cv.boolean,
         vol.Optional("bibliotek"): cv.boolean,
@@ -47,6 +44,9 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: Dict[str, str] = {}
         if user_input is not None:
             self.data = user_input
+
+            # No URL needed - MitID will handle domain detection automatically
+
             _LOGGER.debug(user_input.get("schoolschedule"))
             if user_input.get("schoolschedule") == None:
                 self.data[CONF_SCHOOLSCHEDULE] = False
@@ -87,8 +87,46 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "minuddannelseugenote"
                 )
 
-            # This will log password in plain text: _LOGGER.debug(self.data)
-            return self.async_create_entry(title="Aula", data=self.data)
+            # Perform initial MitID authentication to get session cookies
+            try:
+                from .client import Client
+
+                _LOGGER.info("Performing initial MitID authentication...")
+                client = Client(
+                    self.data[CONF_SCHOOLSCHEDULE],
+                    self.data[CONF_UGEPLAN],
+                    self.data[CONF_BIBLIOTEK],
+                    self.data[CONF_MINUDANNELSEFORLOEB],
+                    self.data[CONF_MINUDANNELSEOPGAVELISTE],
+                    self.data[CONF_MINUDANNELSEUGENOTE],
+                )
+
+                # Show browser during initial setup for MitID authentication
+                await self.hass.async_add_executor_job(client.login, True)
+
+                # Store the authentication cookies
+                self.data[CONF_AUTH_COOKIES] = client.get_session_cookies()
+                _LOGGER.info(
+                    f"Stored {len(self.data[CONF_AUTH_COOKIES])} authentication cookies"
+                )
+
+            except Exception as e:
+                _LOGGER.error(f"MitID authentication failed: {e}")
+                # Provide helpful error message based on the exception
+                if "Browser required" in str(e):
+                    errors["base"] = "browser_required"
+                elif "ChromeDriver" in str(e):
+                    errors["base"] = "chromedriver_failed"
+                elif "display" in str(e).lower():
+                    errors["base"] = "no_display"
+                else:
+                    errors["base"] = "auth_failed"
+                return self.async_show_form(
+                    step_id="user", data_schema=AUTH_SCHEMA, errors=errors
+                )
+
+            # Create entry title
+            return self.async_create_entry(title="Aula MitID", data=self.data)
 
         return self.async_show_form(
             step_id="user", data_schema=AUTH_SCHEMA, errors=errors

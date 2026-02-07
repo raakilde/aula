@@ -1,0 +1,34 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "HomeAssistant",
+            "type": "python",
+            "request": "launch",
+            "module": "homeassistant",
+            "args": [
+                "--debug",
+                "-c",
+                "/config"
+            ],
+            "justMyCode": false,
+            "console": "internalConsole",
+            "cwd": "/workspaces/aula",
+            "env": {
+                "PYTHONPATH": "/workspaces/aula:/workspaces/aula/custom_components"
+            }
+        },
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

@@ -1,0 +1,57 @@
+{
+  "image": "mcr.microsoft.com/devcontainers/python:3.13-bookworm",
+  "name": "Aula Integration development",
+  "initializeCommand": "/bin/mkdir -p ${localWorkspaceFolder}/.haconfig && /bin/cp ${localWorkspaceFolder}/.devcontainer/configuration.yaml ${localWorkspaceFolder}/.haconfig",
+  "containerUser": "1000",
+  "remoteUser": "1000",
+  "appPort": [
+    "9123:8123"
+  ],
+  "forwardPorts": [
+    9123
+  ],
+  "portsAttributes": {
+    "9123": {
+      "label": "HomeAssistant port",
+      "protocol": "http",
+      "onAutoForward": "notify"
+    }
+  },
+  "runArgs": [
+    "--dns=8.8.8.8",
+    "--dns=1.1.1.1"
+  ],
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "files.eol": "\n",
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "python.pythonPath": "/usr/bin/python3",
+        "python.analysis.autoSearchPaths": false,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+          }
+        },
+        "editor.formatOnPaste": false,
+        "editor.formatOnSave": true,
+        "editor.formatOnType": true,
+        "files.trimTrailingWhitespace": true
+      },
+      "extensions": [
+        "ms-python.python",
+        "GitHub.copilot",
+        "ryanluker.vscode-coverage-gutters",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff"
+      ]
+    }
+  },
+  "postCreateCommand": "scripts/setup",
+  "mounts": [
+    "source=${localWorkspaceFolder}/.haconfig,target=/config,type=bind,consistency=cached"
+  ]
+}

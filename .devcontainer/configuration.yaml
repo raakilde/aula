@@ -1,0 +1,26 @@
+# ============================================================
+# Aula Integration Development Configuration
+# ============================================================
+# This configuration is for development and testing of the Aula integration.
+# After starting Home Assistant, configure the integration via UI:
+#
+# 1. Go to: Settings → Devices & Services → Add Integration
+# 2. Search for "Aula"
+# 3. Enter your Aula credentials (MitID)
+#
+# Note: MitID login requires interactive approval in the MitID app
+# ============================================================
+
+default_config:
+
+logger:
+  default: info
+  logs:
+    custom_components.aula: debug
+    selenium: warning
+
+# If you need to debug uncomment the lines below
+# debugpy:
+#   start: true
+#   wait: false
+#   port: 5678

@@ -2,13 +2,15 @@
   "config": {
     "error": {
       "1": "Unknown error",
-      "2": "Unknown error"
+      "2": "Unknown error",
+      "auth_failed": "MitID authentication failed. Please try again.",
+      "browser_required": "Browser automation not available. Install Chrome/Chromium and ChromeDriver for your system architecture.",
+      "chromedriver_failed": "ChromeDriver installation failed. On ARM64: sudo apt install chromium-driver",
+      "no_display": "No display available for browser. Enable X11 forwarding or use headless mode."
     },
     "step": {
       "user": {
         "data": {
-          "username": "Unilogin username",
-          "password": "Unilogin password",
           "schoolschedule": "Add school schedules as calendar entities?",
           "ugeplan": "Add ugeplaner as sensor attributes?",
           "bibliotek": "Add bibliotek as sensor attributes?",
@@ -16,8 +18,8 @@
           "minUddannelseOpgaveListe": "Add min uddannelse opgave liste as sensor attributes?",
           "minUddannelseUgeNote": "Add min uddannelse uge note as sensor attributes?"
         },
-        "description": "Enter your Unilogin credentials...",
-        "title": "Authentication"
+        "description": "Configure Aula integration options. Authentication will be done via MitID when you click Submit.",
+        "title": "Aula MitID Setup"
       },
       "options": {
         "data": {
@@ -40,10 +42,9 @@
     "step": {
       "user": {
         "data": {
-          "username": "Unilogin username",
-          "password": "Unilogin password"
+          "url": "School URL"
         },
-        "description": "Enter your Unilogin credentials...",
+        "description": "School URL is already configured. MitID authentication will be used.",
         "title": "Authentication"
       },
       "options": {

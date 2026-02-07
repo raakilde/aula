@@ -1,5 +1,3 @@
-from collections import namedtuple
-
 STARTUP = r"""
                 _
      /\        | |
@@ -27,3 +25,5 @@ CONF_BIBLIOTEK = "bibliotek"
 CONF_MINUDANNELSEFORLOEB = "minUddannelseForloeb"
 CONF_MINUDANNELSEOPGAVELISTE = "minUddannelseOpgaveListe"
 CONF_MINUDANNELSEUGENOTE = "minUddannelseUgeNote"
+CONF_URL = "url"
+CONF_AUTH_COOKIES = "auth_cookies"

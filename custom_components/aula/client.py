@@ -1,26 +1,34 @@
 """
-Aula client
+Aula client with MitID authentication
 Based on https://github.com/JBoye/HA-Aula
 """
-import logging
-import time
-import requests
-import datetime
-from bs4 import BeautifulSoup
-import json, re
 
-from .minuddannelse import MinUddannelse
+import datetime
+import json
+import logging
+import os
+import re
+import time
+
+import chromedriver_autoinstaller
+import requests
+from homeassistant.exceptions import ConfigEntryNotReady
+from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 from .const import (
     API,
     API_VERSION,
     CICERO_API,
-    MIN_UDDANNELSE_API,
     MEEBOOK_API,
+    MIN_UDDANNELSE_API,
     SYSTEMATIC_API,
-    CICERO_API,
 )
-from homeassistant.exceptions import ConfigEntryNotReady
+from .minuddannelse import MinUddannelse
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,18 +48,16 @@ class Client:
 
     def __init__(
         self,
-        username,
-        password,
         schoolschedule,
         ugeplan,
         bibliotek,
         minUddannelseForloeb,
         minUddannelseOpgaveListe,
         minUddannelseUgeNote,
+        auth_cookies=None,
     ):
-        self._username = username
-        self._password = password
         self._session = None
+        self._auth_cookies = auth_cookies or {}
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
         self._bibliotek = bibliotek
@@ -62,90 +68,487 @@ class Client:
             minUddannelseForloeb, minUddannelseOpgaveListe, minUddannelseUgeNote
         )
 
-    def login(self):
-        _LOGGER.debug("Logging in")
+    def _check_browser_environment(self):
+        """Check if browser automation is possible in current environment"""
+        import platform
+        import shutil
+
+        # Check if running in Docker without display
+        in_docker = os.path.exists("/.dockerenv")
+        has_display = "DISPLAY" in os.environ or "WAYLAND_DISPLAY" in os.environ
+
+        # Check for available browsers
+        browsers = ["google-chrome", "chromium-browser", "chromium", "chrome"]
+        browser_found = None
+        for browser in browsers:
+            if shutil.which(browser):
+                browser_found = browser
+                break
+
+        # Check architecture compatibility
+        arch = platform.machine().lower()
+        supported_archs = ["x86_64", "amd64", "aarch64", "arm64"]
+        arch_supported = any(a in arch for a in supported_archs)
+
+        if not browser_found:
+            return False, "No compatible browser found. Install Chrome or Chromium."
+
+        if in_docker and not has_display:
+            _LOGGER.info("Running in Docker environment, using headless browser mode")
+            # Allow headless operation in Docker
+
+        if not arch_supported:
+            return False, f"Unsupported architecture: {arch}. Requires x86_64 or ARM64."
+
+        try:
+            # Test ChromeDriver availability based on architecture
+            import platform
+
+            arch = platform.machine().lower()
+
+            if arch in ["aarch64", "arm64"]:
+                # ARM64: Check for system ChromeDriver
+                import shutil
+
+                chromedriver_path = shutil.which("chromedriver")
+                if not chromedriver_path:
+                    return (
+                        False,
+                        "System ChromeDriver not found. Install with: sudo apt install chromium-driver",
+                    )
+                _LOGGER.debug(f"Found system ChromeDriver at: {chromedriver_path}")
+            else:
+                # x64: Test if chromedriver-autoinstaller can work
+                try:
+                    pass
+                    # Don't actually install here, just check if we can
+                except Exception as e:
+                    return False, f"ChromeDriver auto-installer not available: {e}"
+
+        except Exception as e:
+            return False, f"ChromeDriver not available: {e}"
+
+        return True, f"Browser environment ready: {browser_found} on {arch}"
+
+    def login(self, show_browser=True):
+        """Login via MitID with environment detection and fallback options"""
+        _LOGGER.info("Starting MitID authentication...")
+
+        # Try to reuse existing session cookies first
+        if self._auth_cookies and self.init_session_with_cookies():
+            if self.test_session():
+                _LOGGER.info("Successfully reused existing session cookies")
+                return
+            else:
+                _LOGGER.info(
+                    "Existing cookies invalid, proceeding with MitID authentication"
+                )
+
+        # Check if browser automation is possible
+        browser_available, browser_message = self._check_browser_environment()
+        _LOGGER.info(browser_message)
+
+        if not browser_available:
+            _LOGGER.error(f"Browser automation not available: {browser_message}")
+            _LOGGER.error("""MitID authentication requires browser support. Options:
+
+            For Home Assistant OS:
+            - Should work out-of-the-box with built-in browser
+
+            For Home Assistant Container/Docker:
+            - Add Chrome to your container
+            - Enable display forwarding if needed
+
+            For Home Assistant Core:
+            - Install browser: sudo apt install chromium-browser
+            - Ensure GUI access is available
+
+            For headless systems:
+            - Set up initial authentication on a system with browser
+            - Copy cookies to headless system""")
+            raise ConfigEntryNotReady(
+                f"Browser required for MitID authentication: {browser_message}"
+            )
+
         self._session = requests.Session()
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/112.0",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "da,en-US;q=0.7,en;q=0.3",
-            "DNT": "1",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-        }
-        params = {
-            "type": "unilogin",
-        }
-        response = self._session.get(
-            "https://login.aula.dk/auth/login.php",
-            params=params,
-            headers=headers,
-            verify=True,
-        )
 
-        _html = BeautifulSoup(response.text, "lxml")
-        if _html.form is None:
-            _LOGGER.error("Login failed: No form found in response from login.aula.dk")
-            _LOGGER.debug(f"Response status: {response.status_code}, URL: {response.url}")
-            _LOGGER.debug(f"Response text (first 500 chars): {response.text[:500]}")
-            raise ConfigEntryNotReady("Unable to login to Aula - login page structure may have changed")
-        _url = _html.form["action"]
-        headers = {
-            "Host": "broker.unilogin.dk",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/112.0",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "da,en-US;q=0.7,en;q=0.3",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": "null",
-            "DNT": "1",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-User": "?1",
-        }
-        data = {
-            "selectedIdp": "uni_idp",
-        }
-        response = self._session.post(
-            _url,
-            headers=headers,
-            data=data,
-            verify=True,
-        )
+        try:
+            self._selenium_login(show_browser)
+        except Exception as e:
+            _LOGGER.error(f"MitID authentication failed: {e}")
+            _LOGGER.info(
+                "Troubleshooting: Check browser installation and display access"
+            )
+            raise
 
-        user_data = {
-            "username": self._username,
-            "password": self._password,
-            "selected-aktoer": "KONTAKT",
-        }
-        redirects = 0
-        success = False
-        url = ""
-        while success == False and redirects < 10:
-            html = BeautifulSoup(response.text, "lxml")
-            if html.form is None:
-                _LOGGER.error(f"Login failed: No form found in response (redirect {redirects})")
-                _LOGGER.debug(f"Response status: {response.status_code}, URL: {response.url}")
-                _LOGGER.debug(f"Response text (first 500 chars): {response.text[:500]}")
-                raise ConfigEntryNotReady("Unable to login to Aula - authentication flow may have changed")
-            url = html.form["action"]
+        _LOGGER.info("MitID authentication completed successfully")
 
-            post_data = {}
-            for input in html.find_all("input"):
-                if input.has_attr("name") and input.has_attr("value"):
-                    post_data[input["name"]] = input["value"]
-                    for key in user_data:
-                        if input.has_attr("name") and input["name"] == key:
-                            post_data[key] = user_data[key]
+    def _selenium_login(self, show_browser):
+        """Perform Selenium-based MitID authentication"""
+        # Setup Chrome options
+        chrome_options = Options()
+        if not show_browser:
+            chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--remote-debugging-port=9222")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-plugins")
+        chrome_options.add_argument("--disable-web-security")
+        chrome_options.add_argument("--disable-features=VizDisplayCompositor")
 
-            response = self._session.post(url, data=post_data, verify=True)
-            if response.url == "https://www.aula.dk:443/portal/":
-                success = True
-            redirects += 1
+        # Additional options for containerized environments
+        if os.path.exists("/.dockerenv"):
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-software-rasterizer")
+            chrome_options.add_argument("--disable-background-timer-throttling")
+            chrome_options.add_argument("--single-process")
+            chrome_options.add_argument("--disable-renderer-backgrounding")
+            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+            chrome_options.add_argument("--disable-client-side-phishing-detection")
+            chrome_options.add_argument("--memory-pressure-off")
+
+        driver = None
+        try:
+            # Use system ChromeDriver on ARM64, auto-install on x64
+            import platform
+
+            arch = platform.machine().lower()
+
+            if arch in ["aarch64", "arm64"]:
+                # Use system-installed Chromium and ChromeDriver on ARM64
+                _LOGGER.info("ARM64 detected, using system Chromium and ChromeDriver")
+                chrome_options.binary_location = "/usr/bin/chromium"
+
+                # Use explicit service path for system ChromeDriver
+                from selenium.webdriver.chrome.service import Service
+
+                service = Service("/usr/bin/chromedriver")
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+            else:
+                # Use auto-installer on x64 systems
+                _LOGGER.info("x64 detected, using ChromeDriver auto-installer")
+                chromedriver_autoinstaller.install()
+                driver = webdriver.Chrome(options=chrome_options)
+
+            driver.implicitly_wait(10)
+
+            # Navigate to Aula login
+            _LOGGER.info("Navigating to Aula login page...")
+            driver.get("https://login.aula.dk/auth/login.php?type=mitid")
+
+            # Check if already logged in
+            if self._check_already_logged_in(driver):
+                _LOGGER.info("Already logged in, extracting session cookies")
+                self._extract_session_cookies(driver)
+                return
+
+            # Handle MitID authentication flow
+            self._handle_mitid_flow(driver)
+
+            # Wait for successful authentication and extract cookies
+            self._wait_for_auth_success(driver)
+            self._extract_session_cookies(driver)
+
+        except Exception as e:
+            _LOGGER.error(f"Selenium browser automation failed: {e}")
+            raise ConfigEntryNotReady(f"Browser automation error: {e}")
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except Exception as e:
+                    _LOGGER.warning(f"Error closing browser: {e}")
+
+    def init_session_with_cookies(self):
+        """Initialize session with stored cookies"""
+        if not self._auth_cookies:
+            return False
+
+        self._session = requests.Session()
+
+        # Add stored cookies to session
+        for cookie in self._auth_cookies:
+            self._session.cookies.set(
+                name=cookie["name"],
+                value=cookie["value"],
+                domain=cookie.get("domain"),
+                path=cookie.get("path", "/"),
+                secure=cookie.get("secure", False),
+            )
+
+        return True
+
+    def test_session(self):
+        """Test if current session is valid"""
+        try:
+            response = self._session.get("https://www.aula.dk/api/v19/me", timeout=10)
+            return response.status_code == 200 and "id" in response.json()
+        except:
+            return False
+
+    def get_session_cookies(self):
+        """Get current session cookies for storage"""
+        cookies = []
+        for cookie in self._session.cookies:
+            cookies.append(
+                {
+                    "name": cookie.name,
+                    "value": cookie.value,
+                    "domain": cookie.domain,
+                    "path": cookie.path,
+                    "secure": cookie.secure,
+                }
+            )
+        return cookies
+
+    def import_cookies_from_file(self, cookie_file_path):
+        """Import authentication cookies from a file (for headless setups)"""
+        try:
+            with open(cookie_file_path, "r") as f:
+                cookies = json.load(f)
+
+            self._auth_cookies = cookies
+            _LOGGER.info(f"Imported {len(cookies)} cookies from {cookie_file_path}")
+
+            # Test the imported session
+            if self.init_session_with_cookies() and self.test_session():
+                _LOGGER.info("Imported cookies are valid and working")
+                return True
+            else:
+                _LOGGER.error("Imported cookies are invalid or expired")
+                return False
+
+        except Exception as e:
+            _LOGGER.error(f"Failed to import cookies from {cookie_file_path}: {e}")
+            return False
+
+    def export_cookies_to_file(self, cookie_file_path):
+        """Export current authentication cookies to a file"""
+        try:
+            if not self._auth_cookies:
+                _LOGGER.error("No authentication cookies to export")
+                return False
+
+            with open(cookie_file_path, "w") as f:
+                json.dump(self._auth_cookies, f, indent=2)
+
+            _LOGGER.info(
+                f"Exported {len(self._auth_cookies)} cookies to {cookie_file_path}"
+            )
+            return True
+
+        except Exception as e:
+            _LOGGER.error(f"Failed to export cookies to {cookie_file_path}: {e}")
+            return False
+
+    def _check_already_logged_in(self, driver):
+        """Check if user is already logged in to Aula"""
+        try:
+            # Wait a moment for page to load
+            time.sleep(2)
+
+            # Check if we're redirected to the main portal
+            if "aula.dk/portal" in driver.current_url:
+                return True
+
+            # Check for existing session indicators
+            session_elements = [
+                "//div[contains(@class, 'logged-in')]",
+                "//a[contains(@href, 'logout')]",
+                "//div[contains(text(), 'Logget ind')]",
+            ]
+
+            for xpath in session_elements:
+                try:
+                    driver.find_element(By.XPATH, xpath)
+                    return True
+                except NoSuchElementException:
+                    continue
+
+            return False
+
+        except Exception as e:
+            _LOGGER.debug(f"Error checking login status: {e}")
+            return False
+
+    def _handle_mitid_flow(self, driver):
+        """Handle MitID authentication with QR code and manual options"""
+        _LOGGER.info("Starting MitID authentication flow...")
+
+        try:
+            # Click MitID login button if present
+            mitid_button = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(text(), 'MitID')]")
+                )
+            )
+            mitid_button.click()
+            _LOGGER.info("Clicked MitID login button")
+
+        except TimeoutException:
+            _LOGGER.info("No MitID button found, might already be on MitID page")
+
+        # Wait for MitID interface to load
+        time.sleep(3)
+
+        # Try QR code authentication first (90 second timeout)
+        if self._try_qr_authentication(driver, timeout=90):
+            return
+
+        # Fallback to manual authentication (120 second timeout)
+        _LOGGER.info("QR code not available, trying manual authentication...")
+        self._try_manual_authentication(driver, timeout=120)
+
+    def _try_qr_authentication(self, driver, timeout=90):
+        """Try QR code authentication"""
+        try:
+            # Look for QR code
+            qr_code = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(
+                    (
+                        By.XPATH,
+                        "//img[contains(@alt, 'QR') or contains(@class, 'QR') or contains(@src, 'qr')]",
+                    )
+                )
+            )
+
+            _LOGGER.info(
+                f"QR code found! Please scan with MitID app within {timeout} seconds..."
+            )
+
+            # Wait for QR code authentication to complete
+            WebDriverWait(driver, timeout).until(
+                lambda d: (
+                    "aula.dk/portal" in d.current_url
+                    or self._check_auth_success_elements(d)
+                )
+            )
+
+            _LOGGER.info("QR code authentication successful!")
+            return True
+
+        except TimeoutException:
+            _LOGGER.warning(f"QR code authentication timed out after {timeout} seconds")
+            return False
+        except NoSuchElementException:
+            _LOGGER.info("No QR code found on page")
+            return False
+
+    def _try_manual_authentication(self, driver, timeout=120):
+        """Try manual MitID authentication"""
+        try:
+            # Look for manual authentication options
+            manual_options = [
+                "//button[contains(text(), 'Chip')]",
+                "//button[contains(text(), 'App')]",
+                "//button[contains(text(), 'Fortsæt')]",
+                "//input[@type='submit']",
+            ]
+
+            for xpath in manual_options:
+                try:
+                    element = driver.find_element(By.XPATH, xpath)
+                    element.click()
+                    _LOGGER.info(
+                        f"Clicked manual authentication option: {element.text}"
+                    )
+                    break
+                except NoSuchElementException:
+                    continue
+
+            _LOGGER.info(
+                f"Please complete MitID authentication manually within {timeout} seconds..."
+            )
+
+            # Wait for manual authentication to complete
+            WebDriverWait(driver, timeout).until(
+                lambda d: (
+                    "aula.dk/portal" in d.current_url
+                    or self._check_auth_success_elements(d)
+                )
+            )
+
+            _LOGGER.info("Manual MitID authentication successful!")
+
+        except TimeoutException:
+            _LOGGER.error(f"Manual authentication timed out after {timeout} seconds")
+            raise ConfigEntryNotReady("MitID authentication timed out")
+
+    def _check_auth_success_elements(self, driver):
+        """Check for elements that indicate successful authentication"""
+        success_indicators = [
+            "//div[contains(@class, 'dashboard')]",
+            "//div[contains(@class, 'portal')]",
+            "//a[contains(@href, 'overblik')]",
+            "//div[contains(text(), 'Velkommen')]",
+        ]
+
+        for xpath in success_indicators:
+            try:
+                driver.find_element(By.XPATH, xpath)
+                return True
+            except NoSuchElementException:
+                continue
+
+        return False
+
+    def _wait_for_auth_success(self, driver):
+        """Wait for authentication success and navigate to portal"""
+        try:
+            # Wait for successful redirect to Aula portal
+            WebDriverWait(driver, 30).until(lambda d: "aula.dk/portal" in d.current_url)
+
+            # Navigate to overview page to ensure full session
+            _LOGGER.info("Navigating to overview page...")
+            driver.get("https://www.aula.dk/portal/#/overblik")
+
+            # Wait for overview page to load
+            WebDriverWait(driver, 30).until(lambda d: "overblik" in d.current_url)
+
+            _LOGGER.info("Successfully reached Aula overview page")
+
+        except TimeoutException:
+            _LOGGER.error("Failed to reach Aula portal after authentication")
+            raise ConfigEntryNotReady(
+                "Authentication appeared successful but failed to access Aula portal"
+            )
+
+    def _extract_session_cookies(self, driver):
+        """Extract session cookies from browser"""
+        cookies = driver.get_cookies()
+
+        # Filter for important session cookies
+        session_cookies = []
+        for cookie in cookies:
+            if any(
+                key in cookie["name"].lower()
+                for key in ["session", "auth", "login", "aula"]
+            ):
+                session_cookies.append(
+                    {
+                        "name": cookie["name"],
+                        "value": cookie["value"],
+                        "domain": cookie["domain"],
+                        "path": cookie.get("path", "/"),
+                        "secure": cookie.get("secure", False),
+                    }
+                )
+
+        # Add all cookies to requests session
+        self._session = requests.Session()
+        for cookie in cookies:
+            self._session.cookies.set(
+                name=cookie["name"],
+                value=cookie["value"],
+                domain=cookie["domain"],
+                path=cookie.get("path", "/"),
+                secure=cookie.get("secure", False),
+            )
+
+        self._auth_cookies = session_cookies
+        _LOGGER.info(f"Extracted {len(session_cookies)} session cookies")
 
         # Find the API url in case of a version change
         self.apiurl = API + API_VERSION
@@ -214,17 +617,35 @@ class Client:
         return token
 
     def update_data(self):
+        # Try to reuse existing session first
+        if (
+            self._auth_cookies
+            and self.init_session_with_cookies()
+            and self.test_session()
+        ):
+            _LOGGER.debug("Reusing existing session cookies")
+        else:
+            _LOGGER.debug("Need to authenticate - cookies invalid or missing")
+            # Use headless browser for background authentication
+            self.login(show_browser=False)
+
+        # Test API access
         is_logged_in = False
-        if self._session and hasattr(self, 'apiurl'):
-            response = self._session.get(
-                self.apiurl + "?method=profiles.getProfilesByLogin", verify=True
-            ).json()
-            is_logged_in = response["status"]["message"] == "OK"
+        if self._session and hasattr(self, "apiurl"):
+            try:
+                response = self._session.get(
+                    self.apiurl + "?method=profiles.getProfilesByLogin", verify=True
+                ).json()
+                is_logged_in = response["status"]["message"] == "OK"
+            except:
+                _LOGGER.warning("Failed to test API access, will retry authentication")
+                is_logged_in = False
 
         _LOGGER.debug("is_logged_in? " + str(is_logged_in))
 
         if not is_logged_in:
-            self.login()
+            _LOGGER.info("Session invalid, re-authenticating with MitID...")
+            self.login(show_browser=False)
 
         self._childnames = {}
         self._institutions = {}
@@ -301,9 +722,9 @@ class Client:
             )
             # _LOGGER.debug("threadres "+str(threadres.text))
             if threadres.json()["status"]["code"] == 403:
-                self.message[
-                    "text"
-                ] = "Log ind på Aula med MitID for at læse denne besked."
+                self.message["text"] = (
+                    "Log ind på Aula med MitID for at læse denne besked."
+                )
                 self.message["sender"] = "Ukendt afsender"
                 self.message["subject"] = "Følsom besked"
             else:
@@ -400,7 +821,7 @@ class Client:
                 + "&coverImageHeight=160&widgetVersion=1.6"
                 + "&userProfile=guardian"
                 + "&sessionUUID="
-                + self._username,
+                + "mitid_user",
                 headers={"Authorization": token, "accept": "application/json"},
                 verify=True,
             ).json()
@@ -442,7 +863,7 @@ class Client:
                 thisweek,
                 self._childuserids,
                 self._institutionProfiles,
-                self._username,
+                "mitid_user",
             )
             self.forloebnext = self._minUddannelse.forloeb(
                 self._session,
@@ -450,7 +871,7 @@ class Client:
                 nextweek,
                 self._childuserids,
                 self._institutionProfiles,
-                self._username,
+                "mitid_user",
             )
         # End of Min Uddannelse Forløb
 
@@ -471,7 +892,7 @@ class Client:
                 week,
                 self._childuserids,
                 self._institutionProfiles,
-                self._username,
+                "mitid_user",
             )
 
         # Currently only one student supported
@@ -506,7 +927,7 @@ class Client:
                     thisweek,
                     self._childuserids,
                     self._institutionProfiles,
-                    self._username,
+                    "mitid_user",
                 )
             except:
                 self.ugenotethisweek = {}
@@ -518,7 +939,7 @@ class Client:
                     nextweek,
                     self._childuserids,
                     self._institutionProfiles,
-                    self._username,
+                    "mitid_user",
                 )
             except:
                 self.ugenotenextweek = {}
@@ -536,9 +957,9 @@ class Client:
             if len(self.widgets) == 0:
                 self.get_widgets()
             if (
-                not "0029" in self.widgets
-                and not "0004" in self.widgets
-                and not "0062" in self.widgets
+                "0029" not in self.widgets
+                and "0004" not in self.widgets
+                and "0062" not in self.widgets
             ):
                 _LOGGER.error(
                     "You have enabled ugeplaner, but we cannot find any matching widgets (0029,0004) in Aula."
@@ -604,7 +1025,7 @@ class Client:
                         + "&dueNoLaterThan="
                         + dueNoLaterThan
                         + "&widgetVersion=1.10&userProfile=guardian&sessionId="
-                        + self._username
+                        + "mitid_user"
                         + "&institutions="
                         + institutions
                     )
@@ -674,7 +1095,7 @@ class Client:
                         "dnt": "1",
                         "origin": "https://www.aula.dk",
                         "referer": "https://www.aula.dk/",
-                        "sessionuuid": self._username,
+                        "sessionuuid": "mitid_session",
                         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36",
                         "x-version": "1.0",
                     }
