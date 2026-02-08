@@ -51,5 +51,95 @@
       "update_failed": "Kunne ikke opdatere cookies. Prøv igen.",
       "base": "Ukendt fejl opstod."
     }
+  },
+  "entity": {
+    "sensor": {
+      "attendance": {
+        "name": "Fremmøde - {child_name}"
+      },
+      "library": {
+        "name": "Bibliotek - {child_name}"
+      },
+      "education": {
+        "name": "Undervisning - {child_name}"
+      },
+      "week_notes": {
+        "name": "Ugenoter - {child_name}"
+      },
+      "week_plan": {
+        "name": "Ugeplan - {child_name}"
+      },
+      "reminders": {
+        "name": "Påmindelser - {child_name}"
+      },
+      "weekly_schedule": {
+        "name": "Ugeplan - {child_name}"
+      },
+      "weekly_schedule_next": {
+        "name": "Ugeplan Næste Uge - {child_name}"
+      }
+    },
+    "calendar": {
+      "schedule": {
+        "name": "Skoleskema - {child_name}"
+      },
+      "tasklist": {
+        "name": "Opgaveliste - {child_name}"
+      }
+    }
+  },
+  "state": {
+    "attendance": {
+      "not_arrived": "Ikke kommet",
+      "sick": "Syg",
+      "vacation": "Ferie/Fri",
+      "present": "Kommet/Til stede",
+      "on_trip": "På tur",
+      "sleeping": "Sover",
+      "left": "Gået"
+    }
+  },
+  "attribute": {
+    "books": "bøger",
+    "profile_picture": "profilbillede",
+    "location": "lokation",
+    "sleep_intervals": "soveintervaller",
+    "check_in_time": "ankomst_tid",
+    "check_out_time": "afrejse_tid",
+    "activity_type": "aktivitetstype",
+    "entry_time": "indgang_tid",
+    "exit_time": "afgang_tid",
+    "exit_with": "afgang_med",
+    "comment": "kommentar",
+    "spare_time_activity": "fritidsaktivitet",
+    "self_decider_start_time": "selvbestemt_starttid",
+    "self_decider_end_time": "selvbestemt_sluttid",
+    "course_this_week": "forløb_denne_uge",
+    "course_next_week": "forløb_næste_uge",
+    "week_note_this_week": "ugenote_denne_uge",
+    "week_note_next_week": "ugenote_næste_uge",
+    "week_plan_this_week": "ugeplan_denne_uge",
+    "week_plan_next_week": "ugeplan_næste_uge",
+    "reminder_list": "huskelisten",
+    "weekly_schedule": "ugeskema",
+    "weekly_schedule_next": "ugeskema_næste_uge",
+    "institution": "institution",
+    "entry_time": "ankomst_tid",
+    "exit_time": "afgang_tid",
+    "exit_with": "afgår_med",
+    "is_on_vacation": "på_ferie",
+    "vacation_title": "ferie_titel",
+    "vacation_description": "ferie_beskrivelse"
+  },
+  "unit": {
+    "books": "bøger",
+    "items": "elementer"
+  },
+  "book_attribute": {
+    "title": "Titel",
+    "author": "Forfatter",
+    "due_date": "Forfaldsdato",
+    "number_of_loans": "AntalLån",
+    "cover": "Omslag"
   }
 }

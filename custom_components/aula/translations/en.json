@@ -49,5 +49,95 @@
       "update_failed": "Failed to update cookies. Please try again.",
       "base": "Unknown error occurred."
     }
+  },
+  "entity": {
+    "sensor": {
+      "attendance": {
+        "name": "Attendance - {child_name}"
+      },
+      "library": {
+        "name": "Library - {child_name}"
+      },
+      "education": {
+        "name": "Education - {child_name}"
+      },
+      "week_notes": {
+        "name": "Week Notes - {child_name}"
+      },
+      "week_plan": {
+        "name": "Week Plan - {child_name}"
+      },
+      "reminders": {
+        "name": "Reminders - {child_name}"
+      },
+      "weekly_schedule": {
+        "name": "Weekly Schedule - {child_name}"
+      },
+      "weekly_schedule_next": {
+        "name": "Weekly Schedule Next Week - {child_name}"
+      }
+    },
+    "calendar": {
+      "schedule": {
+        "name": "Schedule - {child_name}"
+      },
+      "tasklist": {
+        "name": "Task List - {child_name}"
+      }
+    }
+  },
+  "state": {
+    "attendance": {
+      "not_arrived": "Not arrived",
+      "sick": "Sick",
+      "vacation": "Vacation/Free",
+      "present": "Present",
+      "on_trip": "On trip",
+      "sleeping": "Sleeping",
+      "left": "Left"
+    }
+  },
+  "attribute": {
+    "books": "books",
+    "profile_picture": "profile_picture",
+    "location": "location",
+    "sleep_intervals": "sleep_intervals",
+    "check_in_time": "check_in_time",
+    "check_out_time": "check_out_time",
+    "activity_type": "activity_type",
+    "entry_time": "entry_time",
+    "exit_time": "exit_time",
+    "exit_with": "exit_with",
+    "comment": "comment",
+    "spare_time_activity": "spare_time_activity",
+    "self_decider_start_time": "self_decider_start_time",
+    "self_decider_end_time": "self_decider_end_time",
+    "course_this_week": "course_this_week",
+    "course_next_week": "course_next_week",
+    "week_note_this_week": "week_note_this_week",
+    "week_note_next_week": "week_note_next_week",
+    "week_plan_this_week": "week_plan_this_week",
+    "week_plan_next_week": "week_plan_next_week",
+    "reminder_list": "reminder_list",
+    "weekly_schedule": "weekly_schedule",
+    "weekly_schedule_next": "weekly_schedule_next",
+    "institution": "institution",
+    "entry_time": "entry_time",
+    "exit_time": "exit_time",
+    "exit_with": "exit_with",
+    "is_on_vacation": "is_on_vacation",
+    "vacation_title": "vacation_title",
+    "vacation_description": "vacation_description"
+  },
+  "unit": {
+    "books": "books",
+    "items": "items"
+  },
+  "book_attribute": {
+    "title": "Title",
+    "author": "Author",
+    "due_date": "DueDate",
+    "number_of_loans": "NumberOfLoans",
+    "cover": "Cover"
   }
 }

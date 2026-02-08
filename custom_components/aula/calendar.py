@@ -44,7 +44,7 @@ class CalendarDevice(CalendarEntity):
     def __init__(self, hass, calendar, name, childid):
         self.data = CalendarData(hass, calendar, childid)
         self._cal_data = {}
-        self._name = "Skoleskema " + name
+        self._name = "Schedule - " + name.split()[0]
         self._childid = childid
 
     @property
@@ -59,7 +59,8 @@ class CalendarDevice(CalendarEntity):
 
     @property
     def unique_id(self):
-        unique_id = "aulacalendar" + str(self._childid)
+        childname = self._name.split(" - ")[1].lower().replace(" ", "_")
+        unique_id = f"schedule_{childname}"
         _LOGGER.debug("Unique ID for calendar " + str(self._childid) + " " + unique_id)
         return unique_id
 

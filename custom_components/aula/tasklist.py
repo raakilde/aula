@@ -21,7 +21,7 @@ class TaskListDevice(CalendarEntity):
     def __init__(self, hass, calendar, name, childid):
         self.data = TaskListData(hass, calendar, childid)
         self._cal_data = {}
-        self._name = "Opgavelist " + name
+        self._name = "Task List - " + name.split()[0]
         self._childid = childid
 
     @property
@@ -36,7 +36,8 @@ class TaskListDevice(CalendarEntity):
 
     @property
     def unique_id(self):
-        unique_id = "aulatasklist" + str(self._childid)
+        childname = self._name.split(" - ")[1].lower().replace(" ", "_")
+        unique_id = f"tasklist_{childname}"
         _LOGGER.debug("Unique ID for tasklist " + str(self._childid) + " " + unique_id)
         return unique_id
 

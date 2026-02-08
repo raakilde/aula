@@ -36,6 +36,8 @@ _LOGGER = logging.getLogger(__name__)
 class Client:
     huskeliste = {}
     presence = {}
+    presence_templates = {}
+    presence_templates_next = {}
     ugep_attr = {}
     ugepnext_attr = {}
     widgets = {}
@@ -1066,6 +1068,9 @@ class Client:
                 self.presence[str(child["id"])] = 0
         _LOGGER.debug("Child ids and presence data status: " + str(self.presence))
 
+        # Presence Templates (Weekly Schedule):
+        self._get_presence_templates()
+
         # Messages:
         mesres = self._session.get(
             self.apiurl
@@ -1529,4 +1534,127 @@ class Client:
             ugeplan(nextweek, "next")
             # _LOGGER.debug("End result of ugeplan object: "+str(self.ugep_attr))
         # End of Ugeplaner
+
+    def _get_presence_templates(self):
+        """Fetch weekly presence templates (schedules) for all children."""
+        try:
+            # Get institution profile IDs for all children
+            profile_ids = []
+            for child in self._children:
+                if (
+                    "institutionProfile" in child
+                    and "id" in child["institutionProfile"]
+                ):
+                    profile_ids.append(str(child["institutionProfile"]["id"]))
+
+            if not profile_ids:
+                _LOGGER.warning(
+                    "No institution profile IDs found for presence templates"
+                )
+                return
+
+            # Get current week and next week date ranges
+            import datetime
+
+            now = datetime.datetime.now()
+            # Get Monday of current week
+            monday_current = now - datetime.timedelta(days=now.weekday())
+            # Get Sunday of next week (14 days total)
+            sunday_next = monday_current + datetime.timedelta(days=13)
+
+            from_date = monday_current.strftime("%Y-%m-%d")
+            to_date = sunday_next.strftime("%Y-%m-%d")
+
+            # Build query parameters
+            params = {
+                "method": "presence.getPresenceTemplates",
+                "fromDate": from_date,
+                "toDate": to_date,
+            }
+
+            # Add institution profile IDs as array parameters
+            url_params = "&".join(
+                [f"filterInstitutionProfileIds[]={pid}" for pid in profile_ids]
+            )
+
+            url = f"{self.apiurl}?{requests.compat.urlencode(params)}&{url_params}"
+
+            _LOGGER.debug(f"Fetching presence templates from: {url}")
+
+            response = self._session.get(url, verify=True)
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if data.get("status", {}).get("message") == "OK":
+                    # Store presence templates by child name for current and next week
+                    self.presence_templates = {}
+                    self.presence_templates_next = {}
+
+                    # Calculate week boundaries
+                    monday_current = now - datetime.timedelta(days=now.weekday())
+                    monday_next = monday_current + datetime.timedelta(days=7)
+
+                    for template in data.get("data", {}).get(
+                        "presenceWeekTemplates", []
+                    ):
+                        profile = template.get("institutionProfile", {})
+                        child_name = profile.get("name", "")
+
+                        if child_name:
+                            # Get first name only to match existing pattern
+                            first_name = child_name.split()[0] if child_name else ""
+
+                            # Separate current week and next week day templates
+                            current_week_days = []
+                            next_week_days = []
+
+                            for day_template in template.get("dayTemplates", []):
+                                try:
+                                    day_date = datetime.datetime.strptime(
+                                        day_template.get("byDate", ""), "%Y-%m-%d"
+                                    )
+
+                                    if day_date < monday_next:
+                                        current_week_days.append(day_template)
+                                    else:
+                                        next_week_days.append(day_template)
+                                except ValueError:
+                                    # Skip invalid dates
+                                    continue
+
+                            # Store current week schedule
+                            self.presence_templates[first_name] = {
+                                "child_name": child_name,
+                                "institution": profile.get("institutionName", ""),
+                                "profile_picture": profile.get("profilePicture", {}),
+                                "day_templates": current_week_days,
+                            }
+
+                            # Store next week schedule
+                            self.presence_templates_next[first_name] = {
+                                "child_name": child_name,
+                                "institution": profile.get("institutionName", ""),
+                                "profile_picture": profile.get("profilePicture", {}),
+                                "day_templates": next_week_days,
+                            }
+
+                    _LOGGER.debug(
+                        f"Successfully fetched presence templates for {len(self.presence_templates)} children (current + next week)"
+                    )
+                else:
+                    _LOGGER.warning(
+                        f"Failed to fetch presence templates: {data.get('status', {})}"
+                    )
+            else:
+                _LOGGER.warning(
+                    f"HTTP error fetching presence templates: {response.status_code}"
+                )
+
+        except Exception as e:
+            _LOGGER.error(f"Error fetching presence templates: {e}")
+            self.presence_templates = {}
+            self.presence_templates_next = {}
+            self.presence_templates_next = {}
+
         return True

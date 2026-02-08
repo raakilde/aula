@@ -131,6 +131,10 @@ async def async_setup_entry(
                     entities.append(AulaWeekPlanSensor(hass, coordinator, child))
                     if "0062" in client.widgets:
                         entities.append(AulaReminderSensor(hass, coordinator, child))
+
+                # Weekly Schedule sensor (presence templates)
+                entities.append(AulaWeeklyScheduleSensor(hass, coordinator, child))
+                entities.append(AulaWeeklyScheduleNextSensor(hass, coordinator, child))
         else:
             entities.append(AulaAttendanceSensor(hass, coordinator, child))
     # We have data and can now set up the calendar platform:
@@ -159,8 +163,7 @@ class AulaAttendanceSensor(Entity):
     @property
     def name(self):
         childname = self._client._childnames[self._child["id"]].split()[0]
-        institution = self._client._institutions[self._child["id"]]
-        return f"{institution} {childname} Attendance"
+        return f"Attendance - {childname}"
 
     @property
     def state(self):
@@ -175,15 +178,15 @@ class AulaAttendanceSensor(Entity):
         """
         if self._client.presence[str(self._child["id"])] == 1:
             states = [
-                "Ikke kommet",
-                "Syg",
-                "Ferie/Fri",
-                "Kommet/Til stede",
-                "På tur",
-                "Sover",
+                "Not arrived",
+                "Sick",
+                "Vacation/Free",
+                "Present",
+                "On trip",
+                "Sleeping",
                 "6",
                 "7",
-                "Gået",
+                "Left",
             ]
             daily_info = self._client._daily_overview[str(self._child["id"])]
             return states[daily_info["status"]]
@@ -198,44 +201,50 @@ class AulaAttendanceSensor(Entity):
             daily_info = self._client._daily_overview[str(self._child["id"])]
 
             try:
-                attributes["profilePicture"] = daily_info["institutionProfile"][
+                attributes["profile_picture"] = daily_info["institutionProfile"][
                     "profilePicture"
                 ]["url"]
             except:
-                attributes["profilePicture"] = None
+                attributes["profile_picture"] = None
 
             # Daily attendance fields
-            fields = [
-                "location",
-                "sleepIntervals",
-                "checkInTime",
-                "checkOutTime",
-                "activityType",
-                "entryTime",
-                "exitTime",
-                "exitWith",
-                "comment",
-                "spareTimeActivity",
-                "selfDeciderStartTime",
-                "selfDeciderEndTime",
-            ]
+            field_mapping = {
+                "location": "location",
+                "sleepIntervals": "sleep_intervals",
+                "checkInTime": "check_in_time",
+                "checkOutTime": "check_out_time",
+                "activityType": "activity_type",
+                "entryTime": "entry_time",
+                "exitTime": "exit_time",
+                "exitWith": "exit_with",
+                "comment": "comment",
+                "spareTimeActivity": "spare_time_activity",
+                "selfDeciderStartTime": "self_decider_start_time",
+                "selfDeciderEndTime": "self_decider_end_time",
+            }
 
-            for attribute in fields:
-                if attribute == "exitTime" and daily_info[attribute] == "23:59:00":
-                    attributes[attribute] = None
+            for field, attr_name in field_mapping.items():
+                if field == "exitTime" and daily_info[field] == "23:59:00":
+                    attributes[attr_name] = None
                 else:
                     try:
-                        attributes[attribute] = datetime.strptime(
-                            daily_info[attribute], "%H:%M:%S"
+                        attributes[attr_name] = datetime.strptime(
+                            daily_info[field], "%H:%M:%S"
                         ).strftime("%H:%M")
                     except:
-                        attributes[attribute] = daily_info[attribute]
+                        attributes[attr_name] = daily_info[field]
 
         return attributes
 
     @property
     def unique_id(self):
-        return f"aula_attendance_{self._child['id']}"
+        childname = (
+            self._client._childnames[self._child["id"]]
+            .split()[0]
+            .lower()
+            .replace(" ", "_")
+        )
+        return f"attendance_{childname}"
 
     @property
     def icon(self):
@@ -270,8 +279,7 @@ class AulaLibrarySensor(Entity):
     @property
     def name(self):
         childname = self._client._childnames[self._child["id"]].split()[0]
-        institution = self._client._institutions[self._child["id"]]
-        return f"{institution} {childname} Library"
+        return f"Library - {childname}"
 
     @property
     def state(self):
@@ -294,7 +302,13 @@ class AulaLibrarySensor(Entity):
 
     @property
     def unique_id(self):
-        return f"aula_library_{self._child['id']}"
+        childname = (
+            self._client._childnames[self._child["id"]]
+            .split()[0]
+            .lower()
+            .replace(" ", "_")
+        )
+        return f"library_{childname}"
 
     @property
     def icon(self):
@@ -333,8 +347,7 @@ class AulaEducationSensor(Entity):
     @property
     def name(self):
         childname = self._client._childnames[self._child["id"]].split()[0]
-        institution = self._client._institutions[self._child["id"]]
-        return f"{institution} {childname} Education"
+        return f"Education - {childname}"
 
     @property
     def state(self):
@@ -350,24 +363,30 @@ class AulaEducationSensor(Entity):
     def extra_state_attributes(self):
         attributes = {}
         try:
-            attributes["forloebThisWeek"] = self._client.forloebthisweek[
+            attributes["course_this_week"] = self._client.forloebthisweek[
                 self._child["name"]
             ]
         except:
-            attributes["forloebThisWeek"] = "Not available"
+            attributes["course_this_week"] = "Not available"
 
         try:
-            attributes["forloebNextWeek"] = self._client.forloebthisweek[
+            attributes["course_next_week"] = self._client.forloebthisweek[
                 self._child["name"]
             ]
         except:
-            attributes["forloebNextWeek"] = "Not available"
+            attributes["course_next_week"] = "Not available"
 
         return attributes
 
     @property
     def unique_id(self):
-        return f"aula_education_{self._child['id']}"
+        childname = (
+            self._client._childnames[self._child["id"]]
+            .split()[0]
+            .lower()
+            .replace(" ", "_")
+        )
+        return f"education_{childname}"
 
     @property
     def icon(self):
@@ -402,8 +421,7 @@ class AulaWeekNotesSensor(Entity):
     @property
     def name(self):
         childname = self._client._childnames[self._child["id"]].split()[0]
-        institution = self._client._institutions[self._child["id"]]
-        return f"{institution} {childname} Week Notes"
+        return f"Week Notes - {childname}"
 
     @property
     def state(self):
@@ -421,24 +439,30 @@ class AulaWeekNotesSensor(Entity):
     def extra_state_attributes(self):
         attributes = {}
         try:
-            attributes["ugenotethisweek"] = self._client.ugenotethisweek[
+            attributes["week_note_this_week"] = self._client.ugenotethisweek[
                 self._child["name"]
             ]
         except:
-            attributes["ugenotethisweek"] = "Not available"
+            attributes["week_note_this_week"] = "Not available"
 
         try:
-            attributes["ugenotenextweek"] = self._client.ugenotenextweek[
+            attributes["week_note_next_week"] = self._client.ugenotenextweek[
                 self._child["name"]
             ]
         except:
-            attributes["ugenotenextweek"] = "Not available"
+            attributes["week_note_next_week"] = "Not available"
 
         return attributes
 
     @property
     def unique_id(self):
-        return f"aula_weeknotes_{self._child['id']}"
+        childname = (
+            self._client._childnames[self._child["id"]]
+            .split()[0]
+            .lower()
+            .replace(" ", "_")
+        )
+        return f"week_notes_{childname}"
 
     @property
     def icon(self):
@@ -473,8 +497,7 @@ class AulaWeekPlanSensor(Entity):
     @property
     def name(self):
         childname = self._client._childnames[self._child["id"]].split()[0]
-        institution = self._client._institutions[self._child["id"]]
-        return f"{institution} {childname} Week Plan"
+        return f"Week Plan - {childname}"
 
     @property
     def state(self):
@@ -492,24 +515,30 @@ class AulaWeekPlanSensor(Entity):
     def extra_state_attributes(self):
         attributes = {}
         try:
-            attributes["ugeplan"] = self._client.ugep_attr[
+            attributes["week_plan_this_week"] = self._client.ugep_attr[
                 self._child["name"].split()[0]
             ]
         except:
-            attributes["ugeplan"] = "Not available"
+            attributes["week_plan_this_week"] = "Not available"
 
         try:
-            attributes["ugeplan_next"] = self._client.ugepnext_attr[
+            attributes["week_plan_next_week"] = self._client.ugepnext_attr[
                 self._child["name"].split()[0]
             ]
         except:
-            attributes["ugeplan_next"] = "Not available"
+            attributes["week_plan_next_week"] = "Not available"
 
         return attributes
 
     @property
     def unique_id(self):
-        return f"aula_weekplan_{self._child['id']}"
+        childname = (
+            self._client._childnames[self._child["id"]]
+            .split()[0]
+            .lower()
+            .replace(" ", "_")
+        )
+        return f"week_plan_{childname}"
 
     @property
     def icon(self):
@@ -544,8 +573,7 @@ class AulaReminderSensor(Entity):
     @property
     def name(self):
         childname = self._client._childnames[self._child["id"]].split()[0]
-        institution = self._client._institutions[self._child["id"]]
-        return f"{institution} {childname} Reminders"
+        return f"Reminders - {childname}"
 
     @property
     def state(self):
@@ -570,7 +598,13 @@ class AulaReminderSensor(Entity):
 
     @property
     def unique_id(self):
-        return f"aula_reminders_{self._child['id']}"
+        childname = (
+            self._client._childnames[self._child["id"]]
+            .split()[0]
+            .lower()
+            .replace(" ", "_")
+        )
+        return f"reminders_{childname}"
 
     @property
     def icon(self):
@@ -579,6 +613,221 @@ class AulaReminderSensor(Entity):
     @property
     def unit_of_measurement(self):
         return "items"
+
+    @property
+    def should_poll(self):
+        return False
+
+    @property
+    def available(self):
+        return self._coordinator.last_update_success
+
+    async def async_update(self):
+        await self._coordinator.async_request_refresh()
+
+    async def async_added_to_hass(self):
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self.async_write_ha_state)
+        )
+
+
+class AulaWeeklyScheduleSensor(Entity):
+    """Weekly schedule sensor showing presence templates for a child."""
+
+    def __init__(self, hass, coordinator, child) -> None:
+        self._hass = hass
+        self._coordinator = coordinator
+        self._child = child
+        self._client = hass.data[DOMAIN]["client"]
+
+    @property
+    def name(self):
+        childname = self._client._childnames[self._child["id"]].split()[0]
+        return f"Weekly Schedule - {childname}"
+
+    @property
+    def state(self):
+        try:
+            childname = self._client._childnames[self._child["id"]].split()[0]
+            schedule = self._client.presence_templates.get(childname, {})
+            if schedule and schedule.get("day_templates"):
+                # Count number of scheduled days
+                scheduled_days = sum(
+                    1 for day in schedule["day_templates"] if day.get("entryTime")
+                )
+                return f"{scheduled_days} days scheduled"
+            return "No schedule"
+        except Exception:
+            return "unavailable"
+
+    @property
+    def extra_state_attributes(self):
+        attributes = {}
+        try:
+            childname = self._client._childnames[self._child["id"]].split()[0]
+            schedule = self._client.presence_templates.get(childname, {})
+
+            if schedule:
+                attributes["institution"] = schedule.get("institution", "")
+                attributes["child_name"] = schedule.get("child_name", "")
+
+                # Format day templates into more readable format
+                weekly_schedule = []
+                day_names = [
+                    "Monday",
+                    "Tuesday",
+                    "Wednesday",
+                    "Thursday",
+                    "Friday",
+                    "Saturday",
+                    "Sunday",
+                ]
+
+                for day_template in schedule.get("day_templates", []):
+                    day_info = {
+                        "day": day_names[day_template.get("dayOfWeek", 1) - 1],
+                        "date": day_template.get("byDate", ""),
+                        "entry_time": day_template.get("entryTime", ""),
+                        "exit_time": day_template.get("exitTime", ""),
+                        "exit_with": day_template.get("exitWith", ""),
+                        "is_on_vacation": day_template.get("isOnVacation", False),
+                        "comment": day_template.get("comment", ""),
+                        "activity_type": day_template.get("activityType"),
+                    }
+
+                    # Add vacation info if applicable
+                    if day_template.get("vacation"):
+                        day_info["vacation_title"] = day_template["vacation"].get(
+                            "title", ""
+                        )
+                        day_info["vacation_description"] = (
+                            day_template["vacation"]
+                            .get("description", {})
+                            .get("html", "")
+                        )
+
+                    weekly_schedule.append(day_info)
+
+                attributes["weekly_schedule"] = weekly_schedule
+
+        except Exception as e:
+            attributes["error"] = str(e)
+
+        return attributes
+
+    @property
+    def unique_id(self):
+        childname = (
+            self._client._childnames[self._child["id"]]
+            .split()[0]
+            .lower()
+            .replace(" ", "_")
+        )
+        return f"weekly_schedule_{childname}"
+
+    @property
+    def icon(self):
+        return "mdi:calendar-clock"
+
+    @property
+    def should_poll(self):
+        return False
+
+    @property
+    def available(self):
+        return self._coordinator.last_update_success
+
+    async def async_update(self):
+        await self._coordinator.async_request_refresh()
+
+    async def async_added_to_hass(self):
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self.async_write_ha_state)
+        )
+
+
+
+class AulaWeeklyScheduleNextSensor(Entity):
+    """Weekly schedule sensor showing next week's presence templates for a child."""
+
+    def __init__(self, hass, coordinator, child) -> None:
+        self._hass = hass
+        self._coordinator = coordinator
+        self._child = child
+        self._client = hass.data[DOMAIN]["client"]
+
+    @property
+    def name(self):
+        childname = self._client._childnames[self._child["id"]].split()[0]
+        return f"Weekly Schedule Next Week - {childname}"
+
+    @property
+    def state(self):
+        try:
+            childname = self._client._childnames[self._child["id"]].split()[0]
+            schedule = self._client.presence_templates_next.get(childname, {})
+            if schedule and schedule.get("day_templates"):
+                # Count number of scheduled days
+                scheduled_days = sum(1 for day in schedule["day_templates"] if day.get("entryTime"))
+                return f"{scheduled_days} days scheduled"
+            return "No schedule"
+        except Exception as e:
+            return "unavailable"
+
+    @property
+    def extra_state_attributes(self):
+        attributes = {}
+        try:
+            childname = self._client._childnames[self._child["id"]].split()[0]
+            schedule = self._client.presence_templates_next.get(childname, {})
+            
+            if schedule:
+                attributes["institution"] = schedule.get("institution", "")
+                attributes["child_name"] = schedule.get("child_name", "")
+                
+                # Format day templates into more readable format
+                weekly_schedule = []
+                day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                
+                for day_template in schedule.get("day_templates", []):
+                    day_info = {
+                        "day": day_names[day_template.get("dayOfWeek", 1) - 1],
+                        "date": day_template.get("byDate", ""),
+                        "entry_time": day_template.get("entryTime", ""),
+                        "exit_time": day_template.get("exitTime", ""),
+                        "exit_with": day_template.get("exitWith", ""),
+                        "is_on_vacation": day_template.get("isOnVacation", False),
+                        "comment": day_template.get("comment", ""),
+                        "activity_type": day_template.get("activityType")
+                    }
+                    
+                    # Add vacation info if applicable
+                    if day_template.get("vacation"):
+                        day_info["vacation_title"] = day_template["vacation"].get("title", "")
+                        day_info["vacation_description"] = day_template["vacation"].get("description", {}).get("html", "")
+                    
+                    weekly_schedule.append(day_info)
+                
+                attributes["weekly_schedule_next"] = weekly_schedule
+                
+        except Exception as e:
+            attributes["error"] = str(e)
+            
+        return attributes
+
+    @property
+    def unique_id(self):
+        childname = (
+            self._client._childnames[self._child["id"]]
+            .split()[0]
+            .lower()
+            .replace(" ", "_")
+        )
+        return f"weekly_schedule_next_{childname}"
+
+    @property
+    def icon(self):
+        return "mdi:calendar-arrow-right"
 
     @property
     def should_poll(self):
