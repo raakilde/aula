@@ -38,6 +38,7 @@ class Client:
     presence = {}
     presence_templates = {}
     presence_templates_next = {}
+    closed_days = {}
     ugep_attr = {}
     ugepnext_attr = {}
     widgets = {}
@@ -63,6 +64,8 @@ class Client:
         self._auth_cookies = auth_cookies or {}
         self._cookie_persist_callback = cookie_persist_callback
         self._last_session_test = 0  # Rate limiting for session tests
+        self._last_profile_change_increment = None  # Track when profile_change was last incremented based on session token
+        self._session_token_time = None  # Track session token initialization time
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
         self._bibliotek = bibliotek
@@ -369,6 +372,11 @@ class Client:
 
         self._session.headers.update(headers)
 
+        # Initialize session token timing when session is established
+        self._session_token_time = time.time()
+        # Initialize profile_change timing based on session token time
+        self._last_profile_change_increment = self._session_token_time
+
         return True
 
     def test_session(self):
@@ -557,6 +565,86 @@ class Client:
         except Exception as e:
             _LOGGER.error(f"Cookie persistence callback failed: {e}")
 
+    def _auto_increment_profile_change(self):
+        """Auto-increment profile_change counter based on session token lifecycle to maintain session"""
+        try:
+            current_time = time.time()
+
+            # If session token time is not set, initialize it
+            if self._session_token_time is None:
+                self._session_token_time = current_time
+                self._last_profile_change_increment = current_time
+
+            # Check if 30 minutes have passed since last increment (based on session token timing)
+            time_since_last_increment = (
+                current_time - self._last_profile_change_increment
+                if self._last_profile_change_increment is not None
+                else current_time - self._session_token_time
+            )
+
+            if time_since_last_increment >= 1800:  # 30 minutes
+                if (
+                    isinstance(self._auth_cookies, dict)
+                    and "profile_change" in self._auth_cookies
+                ):
+                    try:
+                        # Get current profile_change value and increment it
+                        current_value = int(self._auth_cookies["profile_change"])
+                        new_value = current_value + 1
+
+                        # Update stored cookies
+                        self._auth_cookies["profile_change"] = str(new_value)
+
+                        # Update session cookies if session exists
+                        if self._session:
+                            self._session.cookies.set("profile_change", str(new_value))
+
+                        _LOGGER.info(
+                            f"Auto-incremented profile_change (session-based): {current_value} → {new_value}"
+                        )
+
+                        # Update timestamp
+                        self._last_profile_change_increment = current_time
+
+                        # Persist updated cookies
+                        self._persist_updated_cookies()
+
+                    except (ValueError, TypeError) as e:
+                        _LOGGER.warning(
+                            f"Could not parse profile_change value for auto-increment: {e}"
+                        )
+                else:
+                    # If this is the first time and we have profile_change in session cookies
+                    if self._session and self._session.cookies.get("profile_change"):
+                        session_value = self._session.cookies.get("profile_change")
+                        try:
+                            current_value = int(session_value)
+                            new_value = current_value + 1
+
+                            # Update both stored and session cookies
+                            if isinstance(self._auth_cookies, dict):
+                                self._auth_cookies["profile_change"] = str(new_value)
+
+                            self._session.cookies.set("profile_change", str(new_value))
+
+                            _LOGGER.info(
+                                f"Auto-incremented profile_change (session-based): {current_value} → {new_value}"
+                            )
+
+                            # Update timestamp
+                            self._last_profile_change_increment = current_time
+
+                            # Persist updated cookies
+                            self._persist_updated_cookies()
+
+                        except (ValueError, TypeError) as e:
+                            _LOGGER.warning(
+                                f"Could not parse session profile_change value for auto-increment: {e}"
+                            )
+
+        except Exception as e:
+            _LOGGER.error(f"Error in auto-increment profile_change: {e}")
+
     def get_session_cookies(self):
         """Get current session cookies for storage"""
         cookies = []
@@ -580,6 +668,10 @@ class Client:
 
             self._auth_cookies = cookies
             _LOGGER.info(f"Imported {len(cookies)} cookies from {cookie_file_path}")
+
+            # Initialize session token timing based on cookie import
+            self._session_token_time = time.time()
+            self._last_profile_change_increment = self._session_token_time
 
             # Test the imported session
             if self.init_session_with_cookies() and self.test_session():
@@ -1002,6 +1094,9 @@ class Client:
         # Test API access
         is_logged_in = False
         if self._session and hasattr(self, "apiurl"):
+            # Auto-increment profile_change if 30 minutes have passed
+            self._auto_increment_profile_change()
+
             try:
                 response = self._session.get(
                     self.apiurl + "?method=profiles.getProfilesByLogin",
@@ -1070,6 +1165,9 @@ class Client:
 
         # Presence Templates (Weekly Schedule):
         self._get_presence_templates()
+
+        # Closed Days (Institution holidays):
+        self._get_closed_days()
 
         # Messages:
         mesres = self._session.get(
@@ -1536,125 +1634,145 @@ class Client:
         # End of Ugeplaner
 
     def _get_presence_templates(self):
-        """Fetch weekly presence templates (schedules) for all children."""
+        """Get weekly schedule presence templates (current and next week)"""
         try:
-            # Get institution profile IDs for all children
-            profile_ids = []
-            for child in self._children:
-                if (
-                    "institutionProfile" in child
-                    and "id" in child["institutionProfile"]
-                ):
-                    profile_ids.append(str(child["institutionProfile"]["id"]))
+            # Get current and next week in the required format
+            current_week = datetime.datetime.now().strftime("%Y-W%W")
+            next_week_date = datetime.datetime.now() + datetime.timedelta(weeks=1)
+            next_week = next_week_date.strftime("%Y-W%W")
 
-            if not profile_ids:
-                _LOGGER.warning(
-                    "No institution profile IDs found for presence templates"
-                )
-                return
-
-            # Get current week and next week date ranges
-            import datetime
-
-            now = datetime.datetime.now()
-            # Get Monday of current week
-            monday_current = now - datetime.timedelta(days=now.weekday())
-            # Get Sunday of next week (14 days total)
-            sunday_next = monday_current + datetime.timedelta(days=13)
-
-            from_date = monday_current.strftime("%Y-%m-%d")
-            to_date = sunday_next.strftime("%Y-%m-%d")
-
-            # Build query parameters
-            params = {
-                "method": "presence.getPresenceTemplates",
-                "fromDate": from_date,
-                "toDate": to_date,
-            }
-
-            # Add institution profile IDs as array parameters
-            url_params = "&".join(
-                [f"filterInstitutionProfileIds[]={pid}" for pid in profile_ids]
+            _LOGGER.debug(
+                f"Fetching presence templates for weeks: {current_week}, {next_week}"
             )
 
-            url = f"{self.apiurl}?{requests.compat.urlencode(params)}&{url_params}"
+            # Get presence templates for current week
+            try:
+                response_current = self._session.get(
+                    self.apiurl
+                    + f"?method=presence.getPresenceTemplates&week={current_week}&childIds[]="
+                    + "&childIds[]=".join(self._childids),
+                    verify=True,
+                    timeout=10,
+                ).json()
 
-            _LOGGER.debug(f"Fetching presence templates from: {url}")
-
-            response = self._session.get(url, verify=True)
-
-            if response.status_code == 200:
-                data = response.json()
-
-                if data.get("status", {}).get("message") == "OK":
-                    # Store presence templates by child name for current and next week
-                    self.presence_templates = {}
-                    self.presence_templates_next = {}
-
-                    # Calculate week boundaries
-                    monday_current = now - datetime.timedelta(days=now.weekday())
-                    monday_next = monday_current + datetime.timedelta(days=7)
-
-                    for template in data.get("data", {}).get(
-                        "presenceWeekTemplates", []
-                    ):
-                        profile = template.get("institutionProfile", {})
-                        child_name = profile.get("name", "")
-
-                        if child_name:
-                            # Get first name only to match existing pattern
-                            first_name = child_name.split()[0] if child_name else ""
-
-                            # Separate current week and next week day templates
-                            current_week_days = []
-                            next_week_days = []
-
-                            for day_template in template.get("dayTemplates", []):
-                                try:
-                                    day_date = datetime.datetime.strptime(
-                                        day_template.get("byDate", ""), "%Y-%m-%d"
-                                    )
-
-                                    if day_date < monday_next:
-                                        current_week_days.append(day_template)
-                                    else:
-                                        next_week_days.append(day_template)
-                                except ValueError:
-                                    # Skip invalid dates
-                                    continue
-
-                            # Store current week schedule
-                            self.presence_templates[first_name] = {
-                                "child_name": child_name,
-                                "institution": profile.get("institutionName", ""),
-                                "profile_picture": profile.get("profilePicture", {}),
-                                "day_templates": current_week_days,
-                            }
-
-                            # Store next week schedule
-                            self.presence_templates_next[first_name] = {
-                                "child_name": child_name,
-                                "institution": profile.get("institutionName", ""),
-                                "profile_picture": profile.get("profilePicture", {}),
-                                "day_templates": next_week_days,
-                            }
-
+                if (
+                    response_current.get("status", {}).get("message") == "OK"
+                    and "data" in response_current
+                ):
+                    self.presence_templates = response_current["data"]
                     _LOGGER.debug(
-                        f"Successfully fetched presence templates for {len(self.presence_templates)} children (current + next week)"
+                        f"Retrieved presence templates for current week: {len(self.presence_templates)} entries"
                     )
                 else:
                     _LOGGER.warning(
-                        f"Failed to fetch presence templates: {data.get('status', {})}"
+                        "No presence template data available for current week"
                     )
-            else:
-                _LOGGER.warning(
-                    f"HTTP error fetching presence templates: {response.status_code}"
-                )
+                    self.presence_templates = {}
+
+            except Exception as e:
+                _LOGGER.error(f"Error fetching current week presence templates: {e}")
+                self.presence_templates = {}
+
+            # Get presence templates for next week
+            try:
+                response_next = self._session.get(
+                    self.apiurl
+                    + f"?method=presence.getPresenceTemplates&week={next_week}&childIds[]="
+                    + "&childIds[]=".join(self._childids),
+                    verify=True,
+                    timeout=10,
+                ).json()
+
+                if (
+                    response_next.get("status", {}).get("message") == "OK"
+                    and "data" in response_next
+                ):
+                    self.presence_templates_next = response_next["data"]
+                    _LOGGER.debug(
+                        f"Retrieved presence templates for next week: {len(self.presence_templates_next)} entries"
+                    )
+                else:
+                    _LOGGER.warning("No presence template data available for next week")
+                    self.presence_templates_next = {}
+
+            except Exception as e:
+                _LOGGER.error(f"Error fetching next week presence templates: {e}")
+                self.presence_templates_next = {}
 
         except Exception as e:
-            _LOGGER.error(f"Error fetching presence templates: {e}")
+            _LOGGER.error(f"Error in _get_presence_templates: {e}")
             self.presence_templates = {}
             self.presence_templates_next = {}
-            self.presence_templates_next = {}
 
-        return True
+    def _get_closed_days(self):
+        """Get closed days (lukkedage) for all institutions"""
+        try:
+            _LOGGER.debug("Fetching closed days for institutions...")
+
+            if not self._institutionProfiles:
+                _LOGGER.warning("No institution profiles available for closed days")
+                self.closed_days = {}
+                return
+
+            # Build URL with institutionCodes[] parameters
+            institution_params = "&".join(
+                [f"institutionCodes[]={code}" for code in self._institutionProfiles]
+            )
+
+            url = f"{self.apiurl}?method=presence.getClosedDays&{institution_params}"
+            _LOGGER.debug(f"Fetching closed days from: {url}")
+
+            try:
+                response = self._session.get(url, verify=True, timeout=10)
+
+                if response.status_code == 200:
+                    data = response.json()
+
+                    if data.get("status", {}).get("message") == "OK" and "data" in data:
+                        # Process institutionClosedDays array from response
+                        institution_closed_days = data["data"].get(
+                            "institutionClosedDays", []
+                        )
+
+                        # Clear existing data
+                        self.closed_days = {}
+
+                        # Process each institution's closed days
+                        for institution_data in institution_closed_days:
+                            institution_code = institution_data.get(
+                                "institutionCode", ""
+                            )
+                            closed_days_overview = institution_data.get(
+                                "closedDaysOverview", {}
+                            )
+                            closed_days_list = closed_days_overview.get(
+                                "closedDays", []
+                            )
+
+                            if institution_code:
+                                self.closed_days[institution_code] = closed_days_list
+                                _LOGGER.debug(
+                                    f"Retrieved {len(closed_days_list)} closed days for institution {institution_code}"
+                                )
+
+                        _LOGGER.debug(
+                            f"Successfully fetched closed days for {len(self.closed_days)} institutions"
+                        )
+                    else:
+                        _LOGGER.warning(
+                            f"Failed to fetch closed days: {data.get('status', {})}"
+                        )
+                        self.closed_days = {}
+                else:
+                    _LOGGER.warning(
+                        f"HTTP error fetching closed days: {response.status_code}"
+                    )
+                    self.closed_days = {}
+
+            except Exception as e:
+                _LOGGER.error(f"Error fetching closed days: {e}")
+                self.closed_days = {}
+
+        except Exception as e:
+            _LOGGER.error(f"Error in _get_closed_days: {e}")
+            self.closed_days = {}
