@@ -7,3 +7,13 @@ venv
 .storage
 .DS_Store
 .haconfig
+
+# Personal data files - DO NOT COMMIT
+*.json
+*.csv
+*.xml
+*test*.py
+*debug*.py
+*sample*.json
+*skoleskema*.json
+*config*.json

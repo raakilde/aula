@@ -1,19 +1,19 @@
-from datetime import datetime, timedelta
 import json
-import logging, time
+import logging
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from .const import DOMAIN
-from homeassistant import config_entries, core
-from .const import CONF_MINUDANNELSEOPGAVELISTE
+
 from homeassistant.components.calendar import (
     CalendarEntity,
     CalendarEvent,
 )
 from homeassistant.util import Throttle
 
+from .const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
-MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=10)
+MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=30)
 PARALLEL_UPDATES = 1
 
 

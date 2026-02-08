@@ -78,80 +78,88 @@ Shortcut:<br>
 
 ### Authentication
 
-- **Pure QR Code Login**: During setup, a browser window will open for you to complete the login process:
-  - **MitID QR Code**: Simply scan the QR code with your MitID app when it appears, then approve the login in your app
-  - **Wait for Completion**: Browser window stays open until you complete the MitID approval in your app
-  - **Portal Loading**: System waits for Aula portal to fully load after authentication with multiple stabilization phases
-  - **Session Capture**: Login session cookies are automatically captured for ongoing data access
-  - **Extended Validation**: Browser stays open for 10 seconds after setup completion to ensure everything is properly configured
-  - **Auto-Close with Countdown**: Browser window shows "Login successful! Browser will close in 10 seconds..." before closing
-  - **No Username Required**: The integration uses pure QR code authentication without needing manual credentials
-  - **MitID Authentication**: Secure authentication using Danish MitID with QR code support
-- **Smart Detection**: The integration automatically detects which login methods are available on your Aula instance
-- **Complete Authentication Flow**: The setup process waits for the entire MitID approval process and full session establishment
-- **Headless Operation**: After initial setup, all subsequent logins happen automatically in the background using saved session
-- **Session Management**: Secure cookie-based sessions with automatic re-authentication when needed
+This integration uses a **user-redirect authentication** approach suitable for all Home Assistant deployment types:
+
+#### **Step 1: Feature Selection**
+- Go to Settings → Integrations → Add Integration → Search for "Aula"
+- Select which Aula features you want to enable (calendars, sensors, etc.)
+
+#### **Step 2: MitID Authentication**
+- The integration provides you with a MitID login URL
+- **Open this URL in your own browser** (desktop, mobile, tablet - any device with a browser)
+- Complete the MitID authentication process in your browser:
+  - Scan QR code with MitID app, OR
+  - Use MitID code reader, OR
+  - Use other available MitID methods
+- After successful login, you'll be redirected to the Aula portal
+
+#### **Step 3: Extract Session Cookies**
+- With Aula portal open in your browser, open Developer Tools (F12)
+- Go to **Application** tab → **Storage** → **Cookies** → `https://www.aula.dk`
+- Copy all session cookies in JSON format (e.g., `{"PHPSESSID": "abc123", "aula_token": "xyz789"}`)
+- Paste the JSON into the Home Assistant configuration form
+- Click Submit to complete setup
+
+#### **Key Benefits**
+- ✅ **Works on ALL Home Assistant deployments** (OS, Container, Core, Cloud, etc.)
+- ✅ **No browser required on HA server** - use any device with a browser
+- ✅ **No display/GUI needed** on Home Assistant system
+- ✅ **No ChromeDriver installation** required
+- ✅ **Works in headless environments** (Docker, VMs, cloud instances)
+- ✅ **Cross-platform compatible** (ARM64, x86_64, all architectures)
+- ✅ **Secure**: No credentials stored, only session cookies
 
 ## System Requirements & Compatibility
 
-This integration uses **browser automation** for MitID authentication. Here's what you need to know for different Home Assistant setups:
+This integration uses **user-redirect authentication** and **works on all Home Assistant deployment types** without requiring any special setup:
 
-### ✅ **Home Assistant OS (Recommended)**
-- **Status**: Fully supported out-of-the-box
-- **Requirements**: None - built-in browser support
-- **Setup**: Install integration → Configure → Complete MitID in browser
+### ✅ **Home Assistant OS**
+- **Status**: Fully supported
+- **Requirements**: None
+- **Setup**: Install → Configure → Complete MitID in your browser
 
 ### ✅ **Home Assistant Container (Docker)**
-- **Status**: Supported with additional setup
-- **Requirements**: Chrome/Chromium in container
-- **Setup Options**:
-  - Option 1: Use container with pre-installed browser
-  - Option 2: Add browser to existing container
-  - Option 3: Initial setup on desktop → copy cookies to container
+- **Status**: Fully supported
+- **Requirements**: None (no browser needed on container)
+- **Setup**: Install → Configure → Complete MitID in your browser
 
 ### ✅ **Home Assistant Core (Python venv)**
-- **Status**: Supported with browser installation
-- **Requirements**: Install Chrome/Chromium and ChromeDriver on host system
-  ```bash
-  # x86_64 systems (Intel/AMD)
-  sudo apt install chromium-browser
+- **Status**: Fully supported
+- **Requirements**: None (no browser installation needed)
+- **Setup**: Install → Configure → Complete MitID in your browser
 
-  # ARM64 systems (Raspberry Pi 4, etc.)
-  sudo apt install chromium chromium-driver
+### ✅ **Home Assistant Cloud & Hosted Solutions**
+- **Status**: Fully supported
+- **Requirements**: None
+- **Setup**: Install → Configure → Complete MitID in your browser
 
-  # RHEL/CentOS/Fedora (x64)
-  sudo dnf install chromium
-  ```
-- **Display**: Requires GUI access or X11 forwarding for initial setup
+### ✅ **Headless/Server Environments**
+- **Status**: Fully supported
+- **Requirements**: None (authenticate using any device with browser)
+- **Setup**: Use your phone/computer browser for authentication
 
-### ⚠️ **Headless/Server Environments**
-- **Status**: Supported with workaround
-- **Issue**: No display for browser during initial setup
-- **Workaround**:
-  1. Set up integration on desktop/laptop with browser
-  2. Copy authentication cookies to server
-  3. Import cookies in headless environment
+### 🎯 **Universal Compatibility**
+- **All architectures**: x86_64, ARM64, ARMv7, etc.
+- **All deployment types**: OS, Container, Core, Supervisor, etc.
+- **All environments**: GUI, headless, cloud, local, etc.
+- **Authentication device**: Any device with web browser (phone, tablet, computer)
 
-### 🔧 **Architecture Support**
-- **x86_64**: Chrome + ChromeDriver (optimal)
-- **ARM64**: Chromium browser (tested)
-- **ARMv7**: Chromium browser (should work)
+### 🚨 **Troubleshooting**
 
-### 🚨 **Troubleshooting Common Issues**
-
-| Error | Solution |
+| Issue | Solution |
 |-------|----------|
-| "Browser required" | Install Chrome/Chromium on your system |
-| "No display available" | Enable X11 forwarding or use headless workaround |
-| "ChromeDriver failed" | **x64**: Auto-installs ChromeDriver<br>**ARM64**: `sudo apt install chromium-driver` |
-| "Unable to obtain driver" | ARM64 systems need system ChromeDriver, not auto-installer |
-| "Authentication timeout" | Ensure stable internet and complete MitID approval |
+| "Cookies required" | Make sure to provide session cookies from your browser |
+| "Invalid cookies" | Check cookie format - should be valid JSON like `{"name": "value"}` |
+| "Authentication failed" | Re-authenticate in browser and get fresh cookies |
+| "Invalid JSON" | Ensure cookies are in proper JSON format with quotes around keys and values |
+| MitID login fails | Try different MitID method (QR code, code reader, etc.) |
+| Portal doesn't load | Wait a moment after MitID login for Aula portal to fully load |
 
-### 📱 **Alternative Setup Methods**
-
-1. **Desktop Setup**: Configure on Windows/Mac → export config
-2. **Cookie Import**: Manual cookie extraction from existing session
-3. **Development Container**: Use VS Code dev containers with browser support
+**Getting Cookies Help:**
+1. **Chrome/Edge**: F12 → Application → Storage → Cookies → aula.dk
+2. **Firefox**: F12 → Storage → Cookies → aula.dk
+3. **Safari**: Develop → Web Inspector → Storage → Cookies
+4. **Mobile**: Use desktop browser for easier cookie extraction
 
 ### Known issues
 

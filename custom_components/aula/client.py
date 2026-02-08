@@ -55,9 +55,12 @@ class Client:
         minUddannelseOpgaveListe,
         minUddannelseUgeNote,
         auth_cookies=None,
+        cookie_persist_callback=None,
     ):
         self._session = None
         self._auth_cookies = auth_cookies or {}
+        self._cookie_persist_callback = cookie_persist_callback
+        self._last_session_test = 0  # Rate limiting for session tests
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
         self._bibliotek = bibliotek
@@ -130,6 +133,80 @@ class Client:
 
         return True, f"Browser environment ready: {browser_found} on {arch}"
 
+    def test_jwt_token(self, jwt_token):
+        """Test if a JWT token is valid by making an API call"""
+        try:
+            import requests
+
+            headers = {
+                "Authorization": f"Bearer {jwt_token}",
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (compatible; HomeAssistant-Aula)",
+            }
+
+            # Test the JWT token with a simple API call
+            response = requests.get(
+                "https://www.aula.dk/api/v19/me", headers=headers, timeout=10
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return "id" in data or "userId" in data
+            elif response.status_code == 401:
+                _LOGGER.debug(
+                    "JWT token authentication failed - token expired or invalid"
+                )
+                return False
+            else:
+                _LOGGER.debug(f"JWT token test returned status {response.status_code}")
+                return False
+
+        except Exception as e:
+            _LOGGER.error(f"JWT token test failed: {e}")
+            return False
+
+    def test_authentication(self):
+        """Test if authentication cookies are valid without browser automation"""
+        try:
+            if not self._auth_cookies:
+                _LOGGER.debug("No authentication cookies provided")
+                return False
+
+            # Check if this is a JWT token stored as a special cookie
+            if isinstance(self._auth_cookies, list) and len(self._auth_cookies) == 1:
+                cookie = self._auth_cookies[0]
+                if cookie.get("name") == "_jwt_token":
+                    jwt_token = cookie.get("value")
+                    if jwt_token:
+                        return self.test_jwt_token(jwt_token)
+
+            # Handle different cookie formats for regular session cookies
+            if isinstance(self._auth_cookies, dict):
+                # Simple JSON format: {"PHPSESSID": "value", "aula_token": "value"}
+                # Convert to array format expected by init_session_with_cookies
+                converted_cookies = []
+                for name, value in self._auth_cookies.items():
+                    converted_cookies.append(
+                        {
+                            "name": name,
+                            "value": value,
+                            "domain": ".aula.dk",
+                            "path": "/",
+                            "secure": True,
+                        }
+                    )
+                self._auth_cookies = converted_cookies
+
+            if self.init_session_with_cookies():
+                return self.test_session()
+            else:
+                _LOGGER.debug("Failed to initialize session with cookies")
+                return False
+
+        except Exception as e:
+            _LOGGER.error(f"Authentication test failed: {e}")
+            return False
+
     def login(self, show_browser=True):
         """Login via MitID with environment detection and fallback options"""
         _LOGGER.info("Starting MitID authentication...")
@@ -138,50 +215,20 @@ class Client:
         if self._auth_cookies and self.init_session_with_cookies():
             if self.test_session():
                 _LOGGER.info("Successfully reused existing session cookies")
+                # Initialize API after successful cookie authentication
+                self._setup_post_login()
                 return
             else:
-                _LOGGER.info(
-                    "Existing cookies invalid, proceeding with MitID authentication"
-                )
+                _LOGGER.info("Existing cookies invalid, need fresh authentication")
 
-        # Check if browser automation is possible
-        browser_available, browser_message = self._check_browser_environment()
-        _LOGGER.info(browser_message)
-
-        if not browser_available:
-            _LOGGER.error(f"Browser automation not available: {browser_message}")
-            _LOGGER.error("""MitID authentication requires browser support. Options:
-
-            For Home Assistant OS:
-            - Should work out-of-the-box with built-in browser
-
-            For Home Assistant Container/Docker:
-            - Add Chrome to your container
-            - Enable display forwarding if needed
-
-            For Home Assistant Core:
-            - Install browser: sudo apt install chromium-browser
-            - Ensure GUI access is available
-
-            For headless systems:
-            - Set up initial authentication on a system with browser
-            - Copy cookies to headless system""")
-            raise ConfigEntryNotReady(
-                f"Browser required for MitID authentication: {browser_message}"
-            )
-
-        self._session = requests.Session()
-
-        try:
-            self._selenium_login(show_browser)
-        except Exception as e:
-            _LOGGER.error(f"MitID authentication failed: {e}")
-            _LOGGER.info(
-                "Troubleshooting: Check browser installation and display access"
-            )
-            raise
-
-        _LOGGER.info("MitID authentication completed successfully")
+        # If we get here, browser automation would be needed
+        # But since we're using user-redirect authentication, we should not reach this point
+        _LOGGER.error(
+            "No valid session cookies provided. Please use the Home Assistant configuration flow to authenticate."
+        )
+        raise ConfigEntryNotReady(
+            "Authentication required. Please reconfigure the integration and provide valid session cookies from your browser after MitID login."
+        )
 
     def _selenium_login(self, show_browser):
         """Perform Selenium-based MitID authentication"""
@@ -268,25 +315,245 @@ class Client:
 
         self._session = requests.Session()
 
-        # Add stored cookies to session
-        for cookie in self._auth_cookies:
+        # Handle different cookie input formats
+        cookies_to_set = []
+
+        if isinstance(self._auth_cookies, dict):
+            # JSON format: {"PHPSESSID": "value", "Csrfp-Token": "value"}
+            for name, value in self._auth_cookies.items():
+                cookies_to_set.append(
+                    {
+                        "name": name,
+                        "value": value,
+                        "domain": ".aula.dk",
+                        "path": "/",
+                        "secure": True,
+                    }
+                )
+        elif isinstance(self._auth_cookies, list):
+            # Array format: [{"name": "PHPSESSID", "value": "abc123"}, ...]
+            cookies_to_set = self._auth_cookies
+
+        # Add cookies to session
+        for cookie in cookies_to_set:
             self._session.cookies.set(
                 name=cookie["name"],
                 value=cookie["value"],
-                domain=cookie.get("domain"),
+                domain=cookie.get("domain", ".aula.dk"),
                 path=cookie.get("path", "/"),
-                secure=cookie.get("secure", False),
+                secure=cookie.get("secure", True),
             )
+            _LOGGER.debug(f"Added cookie: {cookie['name']}")
+
+        # Set essential headers for Aula API
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "da-DK,da;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://www.aula.dk/portal/",
+            "sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"macOS"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+        }
+
+        # Add CSRF token header if available
+        csrf_token = self._session.cookies.get("Csrfp-Token")
+        if csrf_token:
+            headers["csrfp-token"] = csrf_token
+            _LOGGER.debug("Added CSRF token header")
+
+        self._session.headers.update(headers)
 
         return True
 
     def test_session(self):
         """Test if current session is valid"""
+        # Rate limiting: only test session once per 5 minutes minimum
+        current_time = time.time()
+        if current_time - self._last_session_test < 300:  # 5 minutes
+            _LOGGER.debug("Session test rate limited, using cached result")
+            return hasattr(self, "apiurl")  # Assume valid if we have API URL
+
+        self._last_session_test = current_time
+
         try:
-            response = self._session.get("https://www.aula.dk/api/v19/me", timeout=10)
-            return response.status_code == 200 and "id" in response.json()
-        except:
+            # Test with the current API version endpoint using correct Aula API format
+            test_urls = [
+                "https://www.aula.dk/api/v22/?method=aulaToken.getAulaToken&widgetId=0018",  # Current version
+                "https://www.aula.dk/api/v21/?method=aulaToken.getAulaToken&widgetId=0018",  # Fallback
+                "https://www.aula.dk/api/v20/?method=aulaToken.getAulaToken&widgetId=0018",  # Fallback
+                "https://www.aula.dk/api/v19/?method=aulaToken.getAulaToken&widgetId=0018",  # Fallback
+            ]
+
+            for url in test_urls:
+                _LOGGER.debug(f"Testing session with: {url}")
+                response = self._session.get(url, timeout=10)
+
+                # Debug response details
+                _LOGGER.debug(f"Response status: {response.status_code}")
+                _LOGGER.debug(f"Response headers: {dict(response.headers)}")
+                if response.status_code != 200:
+                    _LOGGER.debug(f"Response content: {response.text[:500]}")
+
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        _LOGGER.debug(
+                            f"Response data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
+                        )
+                        # For aulaToken.getAulaToken, success means we got a "data" field with token
+                        if "data" in data and data["data"]:
+                            _LOGGER.debug(
+                                f"Session valid, API version detected from {url}"
+                            )
+                            return True
+                    except (ValueError, KeyError) as e:
+                        _LOGGER.debug(f"JSON parsing error: {e}")
+                        continue
+                elif response.status_code == 410:
+                    # API version not supported, try next
+                    continue
+                elif response.status_code in [401, 403]:
+                    # Authentication failed
+                    _LOGGER.debug(f"Authentication failed: {response.status_code}")
+                    # Add brief delay to prevent rapid retry loops
+                    time.sleep(1)
+                    return False
+
+            _LOGGER.debug("All session test URLs failed")
+
+            # Try to auto-sync profile_change counter before giving up
+            if self._try_profile_change_sync():
+                _LOGGER.info(
+                    "Successfully auto-synced profile_change counter, retrying authentication"
+                )
+                # Add delay to prevent rapid retries
+                time.sleep(5)
+                return self._retry_session_test()
+
             return False
+        except Exception as e:
+            _LOGGER.debug(f"Session test error: {e}")
+            return False
+
+    def _try_profile_change_sync(self):
+        """Try to auto-detect and sync the current profile_change counter"""
+        try:
+            _LOGGER.debug("Attempting to auto-sync profile_change counter")
+            # Add delay to prevent rapid polling
+            time.sleep(2)
+
+            # Try to access Aula portal page which might set fresh cookies
+            portal_response = self._session.get(
+                "https://www.aula.dk/portal/", timeout=10, allow_redirects=True
+            )
+
+            # Check if we got any updated cookies from the portal
+            new_profile_change = None
+            for cookie in self._session.cookies:
+                if cookie.name == "profile_change":
+                    new_profile_change = cookie.value
+                    break
+
+            if new_profile_change:
+                old_value = self._session.cookies.get("profile_change")
+                if new_profile_change != old_value:
+                    _LOGGER.info(
+                        f"Auto-detected profile_change update: {old_value} → {new_profile_change}"
+                    )
+
+                    # Update stored cookies for next time
+                    if hasattr(self, "_auth_cookies") and isinstance(
+                        self._auth_cookies, dict
+                    ):
+                        self._auth_cookies["profile_change"] = new_profile_change
+                        _LOGGER.debug(
+                            "Updated stored auth_cookies with new profile_change"
+                        )
+
+                        # Try to persist to Home Assistant config entry if available
+                        self._persist_updated_cookies()
+
+                    return True
+
+            # Try alternative: make a simple API call and check response/cookies
+            try:
+                api_response = self._session.get(
+                    "https://www.aula.dk/api/v22/?method=aulaToken.getAulaToken&widgetId=0001",
+                    timeout=5,
+                )
+
+                # Check for any new profile_change value in response cookies
+                for cookie in self._session.cookies:
+                    if cookie.name == "profile_change":
+                        current_stored = (
+                            self._auth_cookies.get("profile_change")
+                            if hasattr(self, "_auth_cookies")
+                            else None
+                        )
+                        if cookie.value != current_stored:
+                            _LOGGER.info(
+                                f"Auto-detected profile_change from API call: {current_stored} → {cookie.value}"
+                            )
+
+                            if hasattr(self, "_auth_cookies") and isinstance(
+                                self._auth_cookies, dict
+                            ):
+                                self._auth_cookies["profile_change"] = cookie.value
+                                self._persist_updated_cookies()
+
+                            return True
+
+            except Exception as api_e:
+                _LOGGER.debug(f"API-based profile_change detection failed: {api_e}")
+
+            _LOGGER.debug("No profile_change update detected")
+            return False
+
+        except Exception as e:
+            _LOGGER.debug(f"Profile change sync failed: {e}")
+            return False
+
+    def _retry_session_test(self):
+        """Retry session test after profile_change sync"""
+        try:
+            # Quick single test with updated cookies
+            test_url = "https://www.aula.dk/api/v22/?method=aulaToken.getAulaToken&widgetId=0018"
+            response = self._session.get(test_url, timeout=10)
+
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    if "data" in data and data["data"]:
+                        _LOGGER.info(
+                            "Session test successful after profile_change sync"
+                        )
+                        return True
+                except (ValueError, KeyError):
+                    pass
+
+            _LOGGER.debug("Session test still failing after profile_change sync")
+            return False
+
+        except Exception as e:
+            _LOGGER.debug(f"Retry session test error: {e}")
+            return False
+
+    def _persist_updated_cookies(self):
+        """Try to persist updated cookies to Home Assistant config entry"""
+        try:
+            if self._cookie_persist_callback and hasattr(self, "_auth_cookies"):
+                _LOGGER.debug(
+                    "Calling cookie persistence callback with updated cookies"
+                )
+                self._cookie_persist_callback(dict(self._auth_cookies))
+            else:
+                _LOGGER.debug("No cookie persistence callback available")
+        except Exception as e:
+            _LOGGER.error(f"Cookie persistence callback failed: {e}")
 
     def get_session_cookies(self):
         """Get current session cookies for storage"""
@@ -550,40 +817,94 @@ class Client:
         self._auth_cookies = session_cookies
         _LOGGER.info(f"Extracted {len(session_cookies)} session cookies")
 
-        # Find the API url in case of a version change
-        self.apiurl = API + API_VERSION
-        apiver = int(API_VERSION)
-        api_success = False
-        while api_success == False:
-            _LOGGER.debug("Trying API at " + self.apiurl)
-            ver = self._session.get(
-                self.apiurl + "?method=profiles.getProfilesByLogin", verify=True
-            )
-            if ver.status_code == 410:
-                _LOGGER.debug(
-                    "API was expected at "
-                    + self.apiurl
-                    + " but responded with HTTP 410. The integration will automatically try a newer version and everything may work fine."
-                )
-                apiver += 1
-            if ver.status_code == 403:
-                msg = "Access to Aula API was denied. Please check that you have entered the correct credentials."
-                _LOGGER.error(msg)
-                raise ConfigEntryNotReady(msg)
-            elif ver.status_code == 200:
-                self._profiles = ver.json()["data"]["profiles"]
-                # _LOGGER.debug("self._profiles "+str(self._profiles))
-                api_success = True
-            self.apiurl = API + str(apiver)
-        _LOGGER.debug("Found API on " + self.apiurl)
-        #
+    def _setup_post_login(self):
+        """Setup API access after successful login"""
+        try:
+            # Find the API version and setup endpoints
+            self.apiurl = API + API_VERSION
+            apiver = int(API_VERSION)
+            api_success = False
 
-        # ver = self._session.get(self.apiurl + "?method=profiles.getProfilesByLogin", verify=True)
-        # self._profiles = ver.json()["data"]["profiles"]
-        self._profilecontext = self._session.get(
-            self.apiurl + "?method=profiles.getProfileContext&portalrole=guardian",
-            verify=True,
-        ).json()["data"]["institutionProfile"]["relations"]
+            while not api_success:
+                _LOGGER.debug("Trying API at " + self.apiurl)
+                try:
+                    ver = self._session.get(
+                        self.apiurl + "?method=profiles.getProfilesByLogin",
+                        verify=True,
+                        timeout=10,
+                    )
+
+                    if ver.status_code == 410:
+                        _LOGGER.debug(
+                            f"API version {apiver} not supported, trying newer version"
+                        )
+                        apiver += 1
+                        self.apiurl = API + str(apiver)
+                        if apiver > 25:  # Safety limit
+                            break
+                    elif ver.status_code == 403:
+                        msg = "Access to Aula API was denied. Please check your authentication."
+                        _LOGGER.error(msg)
+                        raise ConfigEntryNotReady(msg)
+                    elif ver.status_code == 200:
+                        try:
+                            response_data = ver.json()
+                            if (
+                                "data" in response_data
+                                and "profiles" in response_data["data"]
+                            ):
+                                self._profiles = response_data["data"]["profiles"]
+                                api_success = True
+                                _LOGGER.info(
+                                    f"Successfully connected to API {self.apiurl}"
+                                )
+                            else:
+                                _LOGGER.error(
+                                    "API response missing expected data structure"
+                                )
+                                break
+                        except ValueError as e:
+                            _LOGGER.error(f"Invalid JSON response from API: {e}")
+                            break
+                    else:
+                        _LOGGER.error(
+                            f"API returned unexpected status: {ver.status_code}"
+                        )
+                        break
+
+                except requests.exceptions.RequestException as e:
+                    _LOGGER.error(f"API request failed: {e}")
+                    break
+
+            if not api_success:
+                raise ConfigEntryNotReady("Failed to connect to Aula API")
+
+            # Get profile context
+            try:
+                profile_context = self._session.get(
+                    self.apiurl
+                    + "?method=profiles.getProfileContext&portalrole=guardian",
+                    verify=True,
+                    timeout=10,
+                ).json()
+
+                if (
+                    "data" in profile_context
+                    and "institutionProfile" in profile_context["data"]
+                ):
+                    self._profilecontext = profile_context["data"][
+                        "institutionProfile"
+                    ]["relations"]
+                    _LOGGER.info("Successfully retrieved profile context")
+                else:
+                    _LOGGER.warning("Profile context response missing expected data")
+
+            except Exception as e:
+                _LOGGER.error(f"Failed to get profile context: {e}")
+
+        except Exception as e:
+            _LOGGER.error(f"Post-login setup failed: {e}")
+            raise
         _LOGGER.debug("LOGIN: " + str(success))
         _LOGGER.debug(
             "Config - schoolschedule: "
@@ -605,16 +926,49 @@ class Client:
         _LOGGER.debug("Widgets found: " + str(self.widgets))
 
     def get_token(self, widgetid, mock=False):
+        """Get Bearer token for specific widget API calls"""
         _LOGGER.debug("Requesting token for widget " + widgetid)
         if mock:
             return "MockToken"
-        self._bearertoken = self._session.get(
-            self.apiurl + "?method=aulaToken.getAulaToken&widgetId=" + widgetid,
-            verify=True,
-        ).json()["data"]
-        token = "Bearer " + str(self._bearertoken)
-        self.tokens[widgetid] = token
-        return token
+
+        # Check if we already have a token for this widget
+        if widgetid in self.tokens:
+            _LOGGER.debug(f"Reusing existing token for widget {widgetid}")
+            return self.tokens[widgetid]
+
+        try:
+            # Get token using current session
+            response = self._session.get(
+                self.apiurl + "?method=aulaToken.getAulaToken&widgetId=" + widgetid,
+                verify=True,
+                timeout=10,
+            )
+
+            if response.status_code != 200:
+                _LOGGER.error(
+                    f"Token request failed with status {response.status_code} for widget {widgetid}"
+                )
+                raise Exception(f"Token request failed: {response.status_code}")
+
+            response_data = response.json()
+            if "data" not in response_data:
+                _LOGGER.error(
+                    f"Token response missing data for widget {widgetid}: {response_data}"
+                )
+                raise Exception("Token response missing data")
+
+            self._bearertoken = response_data["data"]
+            token = "Bearer " + str(self._bearertoken)
+            self.tokens[widgetid] = token
+
+            _LOGGER.debug(f"Successfully obtained token for widget {widgetid}")
+            return token
+
+        except Exception as e:
+            _LOGGER.error(f"Failed to get token for widget {widgetid}: {e}")
+            raise ConfigEntryNotReady(
+                f"Failed to obtain API token for widget {widgetid}: {e}"
+            )
 
     def update_data(self):
         # Try to reuse existing session first
@@ -624,28 +978,46 @@ class Client:
             and self.test_session()
         ):
             _LOGGER.debug("Reusing existing session cookies")
+            # Ensure API is set up
+            if not hasattr(self, "apiurl"):
+                self._setup_post_login()
         else:
             _LOGGER.debug("Need to authenticate - cookies invalid or missing")
-            # Use headless browser for background authentication
-            self.login(show_browser=False)
+            # Re-authenticate using the same cookies (they might work on retry)
+            if self._auth_cookies:
+                try:
+                    self.login(show_browser=False)
+                except Exception as e:
+                    _LOGGER.error(f"Re-authentication failed: {e}")
+                    raise ConfigEntryNotReady(
+                        "Authentication session expired. Please reconfigure the integration."
+                    )
+            else:
+                raise ConfigEntryNotReady(
+                    "No authentication cookies available. Please reconfigure the integration."
+                )
 
         # Test API access
         is_logged_in = False
         if self._session and hasattr(self, "apiurl"):
             try:
                 response = self._session.get(
-                    self.apiurl + "?method=profiles.getProfilesByLogin", verify=True
+                    self.apiurl + "?method=profiles.getProfilesByLogin",
+                    verify=True,
+                    timeout=10,
                 ).json()
-                is_logged_in = response["status"]["message"] == "OK"
-            except:
-                _LOGGER.warning("Failed to test API access, will retry authentication")
+                is_logged_in = response.get("status", {}).get("message") == "OK"
+            except Exception as e:
+                _LOGGER.warning(f"Failed to test API access: {e}")
                 is_logged_in = False
 
         _LOGGER.debug("is_logged_in? " + str(is_logged_in))
 
         if not is_logged_in:
-            _LOGGER.info("Session invalid, re-authenticating with MitID...")
-            self.login(show_browser=False)
+            _LOGGER.error("API access test failed - authentication may have expired")
+            raise ConfigEntryNotReady(
+                "API access denied. Please reconfigure the integration with fresh cookies."
+            )
 
         self._childnames = {}
         self._institutions = {}

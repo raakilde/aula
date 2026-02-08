@@ -1,52 +1,55 @@
 {
   "config": {
     "error": {
-      "1": "Unknown error",
-      "2": "Unknown error",
-      "auth_failed": "MitID godkendelse mislykkedes. Prøv igen.",
-      "browser_required": "Browser automation ikke tilgængelig. Installer Chrome/Chromium og ChromeDriver for din systemarkitektur.",
-      "chromedriver_failed": "ChromeDriver installation mislykkedes. På ARM64: sudo apt install chromium-driver",
-      "no_display": "Ingen skærm tilgængelig for browser. Aktivér X11 forwarding."
+      "1": "Ukendt fejl",
+      "2": "Ukendt fejl",
+      "missing_cookies": "Mangler påkrævede cookies. Sørg for at PHPSESSID og Csrfp-Token er inkluderet.",
+      "cookies_required": "Angiv venligst session cookies fra din browser",
+      "invalid_cookies": "De angivne cookies er ugyldige eller udløbet",
+      "invalid_json": "Ugyldigt JSON format. Angiv cookies som JSON",
+      "validation_failed": "Godkendelse mislykkedes. Prøv igen",
+      "token_required": "Angiv venligst et JWT token",
+      "invalid_token": "Det angivne JWT token er ugyldigt eller udløbet",
+      "token_validation_failed": "JWT token validering mislykkedes. Prøv igen"
     },
     "step": {
       "user": {
         "data": {
+          "session_cookies": "Session cookies fra browser",
           "schoolschedule": "Tilføj skoleskemaer som kalender entiteter?",
           "ugeplan": "Tilføj ugeplaner som sensor attributter?",
           "bibliotek": "Tilføj bibliotek som sensor attributter?",
-          "minuddannelseforloeb": "Tilføj min uddannelse forløb som sensor attributter?",
-          "minuddannelseopgaveliste": "Tilføj min uddannelse skema som sensor attributter?",
-          "minuddannelseugenote": "Tilføj min uddannelse ugenote som sensor attributter?"
+          "minUddannelseForloeb": "Tilføj min uddannelse forløb som sensor attributter?",
+          "minUddannelseOpgaveListe": "Tilføj min uddannelse opgave liste som sensor attributter?",
+          "minUddannelseUgeNote": "Tilføj min uddannelse uge note som sensor attributter?"
         },
-        "description": "Konfigurer Aula integration indstillinger. Godkendelse med MitID sker når du klikker Gem.",
-        "title": "Aula MitID Opsætning"
+        "description": "Opsæt din Aula integration ved at angive session cookies og vælge funktioner. {instructions}",
+        "title": "Aula Opsætning"
+      }
+    }
+  },
+  "selector": {
+    "auth_method": {
+      "options": {
+        "cookies": "Session Cookies",
+        "jwt_token": "JWT Token"
       }
     }
   },
   "options": {
-    "error": {
-      "1": "Unknown error"
-    },
     "step": {
-      "user": {
+      "init": {
         "data": {
-          "url": "Skole URL"
+          "session_cookies": "Friske Session Cookies (JSON format)"
         },
-        "description": "Skole URL er allerede konfigureret. MitID godkendelse vil blive anvendt.",
-        "title": "Login"
-      },
-      "options": {
-        "data": {
-          "schoolschedule": "Tilføj skoleskemaer som kalender entiteter?",
-          "ugeplan": "Tilføj ugeplaner som sensor attributter?",
-          "bibliotek": "Tilføj bibliotek som sensor attributter?",
-          "minuddannelseforloeb": "Tilføj min uddannelse forløb som sensor attributter?",
-          "minuddannelseopgaveliste": "Tilføj min uddannelse skema som sensor attributter?",
-          "minuddannelseugenote": "Tilføj min uddannelse ugenote som sensor attributter?"
-        },
-        "description": "",
-        "title": "Login"
+        "description": "**Opdater dine udløbne session cookies**\\n\\n{instructions}\\n\\n**Nuværende cookies:** {current_cookies}",
+        "title": "Opdater Aula Godkendelse"
       }
+    },
+    "error": {
+      "invalid_json": "Ugyldigt JSON format. Angiv cookies som gyldigt JSON.",
+      "update_failed": "Kunne ikke opdatere cookies. Prøv igen.",
+      "base": "Ukendt fejl opstod."
     }
   }
 }

@@ -167,8 +167,17 @@ class MinUddannelse:
 
         _html = BeautifulSoup(result.content, "lxml")
         anchor_element = _html.find("div", {"class": "col-sm-8 col-xs-7"})
-        anchor_element = anchor_element.find("a")
-        elevid = anchor_element.get("href").replace("minuge/", "")
+
+        if anchor_element is None:
+            _LOGGER.debug("Could not find anchor element div")
+            return {}
+
+        anchor_link = anchor_element.find("a")
+        if anchor_link is None:
+            _LOGGER.debug("Could not find anchor link")
+            return {}
+
+        elevid = anchor_link.get("href").replace("minuge/", "")
 
         opgaver = session.get(
             # MIN_UDDANNELSE_API

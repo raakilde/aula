@@ -1,35 +1,37 @@
+import json
 import logging
 from typing import Any, Dict, Optional
 
-import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.helpers.entity_registry import (
-    async_entries_for_config_entry,
-    async_get,
-)
 
 from .const import (
-    CONF_AUTH_COOKIES,
-    CONF_BIBLIOTEK,
-    CONF_MINUDANNELSEFORLOEB,
-    CONF_MINUDANNELSEOPGAVELISTE,
-    CONF_MINUDANNELSEUGENOTE,
-    CONF_SCHOOLSCHEDULE,
-    CONF_UGEPLAN,
     DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-AUTH_SCHEMA = vol.Schema(
+# Schema for initial setup with cookies and feature selection
+SETUP_SCHEMA = vol.Schema(
     {
-        vol.Optional("schoolschedule"): cv.boolean,
-        vol.Optional("ugeplan"): cv.boolean,
-        vol.Optional("bibliotek"): cv.boolean,
-        vol.Optional("minuddannelseforloeb"): cv.boolean,
-        vol.Optional("minuddannelseopgaveliste"): cv.boolean,
-        vol.Optional("minuddannelseugenote"): cv.boolean,
+        vol.Required(
+            "session_cookies", description="Enter your session cookies from browser"
+        ): str,
+        vol.Optional("schoolschedule", default=True): bool,
+        vol.Optional("ugeplan", default=True): bool,
+        vol.Optional("bibliotek", default=True): bool,
+        vol.Optional("minUddannelseForloeb", default=True): bool,
+        vol.Optional("minUddannelseOpgaveListe", default=True): bool,
+        vol.Optional("minUddannelseUgeNote", default=True): bool,
+    }
+)
+
+# Schema for updating session cookies
+COOKIE_UPDATE_SCHEMA = vol.Schema(
+    {
+        vol.Required(
+            "session_cookies", description="Enter your fresh session cookies as JSON"
+        ): str,
     }
 )
 
@@ -37,143 +39,203 @@ AUTH_SCHEMA = vol.Schema(
 class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Aula Custom config flow."""
 
-    data: Optional[Dict[str, Any]]
+    VERSION = 1
 
-    async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None):
-        """Invoked when a user initiates a flow via the user interface."""
-        errors: Dict[str, str] = {}
+    def __init__(self):
+        """Initialize config flow."""
+        print("AULA CONFIG FLOW __INIT__ CALLED")
+        _LOGGER.critical("AULA CONFIG FLOW __INIT__ CALLED")
+        super().__init__()
+
+    async def async_step_user(self, user_input=None):
+        """Handle initial setup - collect session cookies from user."""
+
+        print("AULA CONFIG FLOW async_step_user CALLED")
+        _LOGGER.critical("AULA CONFIG FLOW async_step_user CALLED")
+
         if user_input is not None:
-            self.data = user_input
-
-            # No URL needed - MitID will handle domain detection automatically
-
-            _LOGGER.debug(user_input.get("schoolschedule"))
-            if user_input.get("schoolschedule") == None:
-                self.data[CONF_SCHOOLSCHEDULE] = False
-            else:
-                self.data[CONF_SCHOOLSCHEDULE] = user_input.get("schoolschedule")
-            _LOGGER.debug(user_input.get("ugeplan"))
-            if user_input.get("ugeplan") == None:
-                self.data[CONF_UGEPLAN] = False
-            else:
-                self.data[CONF_UGEPLAN] = user_input.get("ugeplan")
-            _LOGGER.debug(user_input.get("bibliotek"))
-            if user_input.get("bibliotek") == None:
-                self.data[CONF_BIBLIOTEK] = False
-            else:
-                self.data[CONF_BIBLIOTEK] = user_input.get("bibliotek")
-
-            _LOGGER.debug(user_input.get("minuddannelseforloeb"))
-            if user_input.get("minuddannelseforloeb") == None:
-                self.data[CONF_MINUDANNELSEFORLOEB] = False
-            else:
-                self.data[CONF_MINUDANNELSEFORLOEB] = user_input.get(
-                    "minuddannelseforloeb"
-                )
-
-            _LOGGER.debug(user_input.get("minuddannelseopgaveliste"))
-            if user_input.get("minuddannelseopgaveliste") == None:
-                self.data[CONF_MINUDANNELSEOPGAVELISTE] = False
-            else:
-                self.data[CONF_MINUDANNELSEOPGAVELISTE] = user_input.get(
-                    "minuddannelseopgaveliste"
-                )
-
-            _LOGGER.debug(user_input.get("minuddannelseugenote"))
-            if user_input.get("minuddannelseugenote") == None:
-                self.data[CONF_MINUDANNELSEUGENOTE] = False
-            else:
-                self.data[CONF_MINUDANNELSEUGENOTE] = user_input.get(
-                    "minuddannelseugenote"
-                )
-
-            # Perform initial MitID authentication to get session cookies
             try:
-                from .client import Client
+                # Parse the session cookies (support both JSON and browser cookie string format)
+                cookies_input = user_input["session_cookies"].strip()
 
-                _LOGGER.info("Performing initial MitID authentication...")
-                client = Client(
-                    self.data[CONF_SCHOOLSCHEDULE],
-                    self.data[CONF_UGEPLAN],
-                    self.data[CONF_BIBLIOTEK],
-                    self.data[CONF_MINUDANNELSEFORLOEB],
-                    self.data[CONF_MINUDANNELSEOPGAVELISTE],
-                    self.data[CONF_MINUDANNELSEUGENOTE],
-                )
-
-                # Show browser during initial setup for MitID authentication
-                await self.hass.async_add_executor_job(client.login, True)
-
-                # Store the authentication cookies
-                self.data[CONF_AUTH_COOKIES] = client.get_session_cookies()
-                _LOGGER.info(
-                    f"Stored {len(self.data[CONF_AUTH_COOKIES])} authentication cookies"
-                )
-
-            except Exception as e:
-                _LOGGER.error(f"MitID authentication failed: {e}")
-                # Provide helpful error message based on the exception
-                if "Browser required" in str(e):
-                    errors["base"] = "browser_required"
-                elif "ChromeDriver" in str(e):
-                    errors["base"] = "chromedriver_failed"
-                elif "display" in str(e).lower():
-                    errors["base"] = "no_display"
+                if cookies_input.startswith("{"):
+                    # JSON format: {"PHPSESSID": "abc123", "Csrfp-Token": "def456"}
+                    auth_cookies = json.loads(cookies_input)
                 else:
-                    errors["base"] = "auth_failed"
-                return self.async_show_form(
-                    step_id="user", data_schema=AUTH_SCHEMA, errors=errors
-                )
+                    # Browser cookie string format: PHPSESSID=abc123; Csrfp-Token=def456
+                    auth_cookies = {}
+                    for cookie_pair in cookies_input.split(";"):
+                        if "=" in cookie_pair:
+                            key, value = cookie_pair.strip().split("=", 1)
+                            auth_cookies[key.strip()] = value.strip()
 
-            # Create entry title
-            return self.async_create_entry(title="Aula MitID", data=self.data)
+                # Validate we have essential cookies
+                if not auth_cookies.get("PHPSESSID") or not auth_cookies.get(
+                    "Csrfp-Token"
+                ):
+                    raise ValueError(
+                        "Missing essential cookies (PHPSESSID or Csrfp-Token)"
+                    )
 
+                # Include configuration for sensors to work
+                data = {
+                    "auth_cookies": auth_cookies,
+                    "schoolschedule": user_input.get("schoolschedule", True),
+                    "ugeplan": user_input.get("ugeplan", True),
+                    "bibliotek": user_input.get("bibliotek", True),
+                    "minUddannelseForloeb": user_input.get(
+                        "minUddannelseForloeb", True
+                    ),
+                    "minUddannelseOpgaveListe": user_input.get(
+                        "minUddannelseOpgaveListe", True
+                    ),
+                    "minUddannelseUgeNote": user_input.get(
+                        "minUddannelseUgeNote", True
+                    ),
+                }
+
+                return self.async_create_entry(title="Aula", data=data)
+
+            except json.JSONDecodeError:
+                errors = {"session_cookies": "invalid_json"}
+            except ValueError as e:
+                if "Missing essential cookies" in str(e):
+                    errors = {"session_cookies": "missing_cookies"}
+                else:
+                    errors = {"base": "unknown"}
+            except Exception as e:
+                _LOGGER.error(f"Error processing cookies: {e}")
+                errors = {"base": "unknown"}
+
+            return self.async_show_form(
+                step_id="user",
+                data_schema=SETUP_SCHEMA,
+                errors=errors,
+                description_placeholders={
+                    "instructions": """**Setup your Aula integration:**
+
+1. Open https://www.aula.dk in your browser
+2. Login with MitID (complete authentication)
+3. Open Developer Tools (F12) → Application → Cookies → https://www.aula.dk
+4. Copy cookies in either format:
+
+**Browser format:** initialLogin=true; Csrfp-Token=abc123; PHPSESSID=def456; profile_change=17
+
+**JSON format:** {"PHPSESSID": "def456", "Csrfp-Token": "abc123", "profile_change": "17", "initialLogin": "true"}""",
+                },
+            )
+
+        # Show initial form
         return self.async_show_form(
-            step_id="user", data_schema=AUTH_SCHEMA, errors=errors
+            step_id="user",
+            data_schema=SETUP_SCHEMA,
+            description_placeholders={
+                "instructions": """**Setup your Aula integration:**
+
+1. Open https://www.aula.dk in your browser
+2. Login with MitID (complete authentication)
+3. Open Developer Tools (F12) → Application → Cookies → https://www.aula.dk
+4. Copy cookies in either format:
+
+**Browser format:** initialLogin=true; Csrfp-Token=abc123; PHPSESSID=def456; profile_change=17
+
+**JSON format:** {"PHPSESSID": "def456", "Csrfp-Token": "abc123", "profile_change": "17", "initialLogin": "true"}""",
+            },
         )
 
-
-# reconfiguration (options flow), to be implemented
-#    @staticmethod
-#    @callback
-#    def async_get_options_flow(config_entry):
-#        return OptionsFlowHandler(config_entry)
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        """Return options flow handler."""
+        return OptionsFlowHandler(config_entry)
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    """Blueprint config flow options handler."""
+    """Handle Aula options flow - allows updating cookies."""
 
-    def __init__(self, config_entry):
-        """Initialize HACS options flow."""
-        self.config_entry = config_entry
-        self.options = dict(config_entry.options)
+    def __init__(self, config_entry: config_entries.ConfigEntry):
+        """Initialize options flow."""
+        super().__init__()
+        self._config_entry = config_entry
 
-    async def async_step_init(self, user_input=None):
-        """Manage the options."""
-        _LOGGER.debug("Options......")
-        _LOGGER.debug(self.config_entry)
-        entity_registry = await async_get(self.hass)
-        entries = async_entries_for_config_entry(
-            entity_registry, self.config_entry.entry_id
-        )
-        repo_map = {e.entity_id: e for e in entries}
-        for entity_id in repo_map.keys():
-            # Unregister from HA
-            _LOGGER.debug(entity_id)
-            # entity_registry.async_remove(entity_id)
-        return await self.async_step_user()
-
-    async def async_step_user(self, user_input=None):
-        """Handle a flow initialized by the user."""
+    async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None):
+        """Handle options step."""
         if user_input is not None:
-            self.options.update(user_input)
-            return await self._update_options()
+            try:
+                # Parse the new session cookies (support both JSON and browser cookie string format)
+                cookies_input = user_input["session_cookies"].strip()
+
+                if cookies_input.startswith("{"):
+                    # JSON format: {"PHPSESSID": "abc123", "Csrfp-Token": "def456"}
+                    new_cookies = json.loads(cookies_input)
+                else:
+                    # Browser cookie string format: PHPSESSID=abc123; Csrfp-Token=def456
+                    new_cookies = {}
+                    for cookie_pair in cookies_input.split(";"):
+                        if "=" in cookie_pair:
+                            key, value = cookie_pair.strip().split("=", 1)
+                            new_cookies[key.strip()] = value.strip()
+
+                # Validate we have essential cookies
+                if not new_cookies.get("PHPSESSID") or not new_cookies.get(
+                    "Csrfp-Token"
+                ):
+                    raise ValueError(
+                        "Missing essential cookies (PHPSESSID or Csrfp-Token)"
+                    )
+
+                # Update the config entry with fresh cookies
+                new_data = dict(self._config_entry.data)
+                new_data["auth_cookies"] = new_cookies
+
+                self.hass.config_entries.async_update_entry(
+                    self._config_entry,
+                    data=new_data,
+                )
+
+                # Trigger a reload of the integration
+                await self.hass.config_entries.async_reload(self._config_entry.entry_id)
+
+                return self.async_create_entry(title="", data={})
+
+            except json.JSONDecodeError:
+                errors = {"session_cookies": "Invalid JSON format"}
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=COOKIE_UPDATE_SCHEMA,
+                    errors=errors,
+                    description_placeholders={
+                        "current_cookies": str(
+                            self._config_entry.data.get("auth_cookies", {})
+                        ),
+                        "instructions": """**How to get fresh cookies:**
+
+1. Open https://www.aula.dk in your browser
+2. Login with MitID (complete authentication)
+3. Open Developer Tools (F12) → Application → Cookies → https://www.aula.dk
+4. Copy cookies as JSON format:
+   {"PHPSESSID": "abc123", "Csrfp-Token": "def456", "profile_change": "13", "initialLogin": "true"}""",
+                    },
+                )
+            except Exception as e:
+                _LOGGER.error(f"Error updating cookies: {e}")
+                errors = {"base": "update_failed"}
+                return self.async_show_form(
+                    step_id="init", data_schema=COOKIE_UPDATE_SCHEMA, errors=errors
+                )
 
         return self.async_show_form(
-            step_id="user",
-            data_schema=AUTH_SCHEMA,
-        )
+            step_id="init",
+            data_schema=COOKIE_UPDATE_SCHEMA,
+            description_placeholders={
+                "current_cookies": str(self._config_entry.data.get("auth_cookies", {})),
+                "instructions": """**Update your expired session cookies:**
 
-    async def _update_options(self):
-        """Update config entry options."""
-        return self.async_create_entry(title="Aula", data=self.options)
+1. Open https://www.aula.dk in your browser
+2. Login with MitID (complete authentication)
+3. Open Developer Tools (F12) → Application → Cookies → https://www.aula.dk
+4. Copy ALL cookies as JSON format:
+   {"PHPSESSID": "abc123", "Csrfp-Token": "def456", "profile_change": "13", "initialLogin": "true"}
+
+**Current cookies:** {current_cookies}""",
+            },
+        )

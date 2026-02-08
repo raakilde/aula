@@ -1,19 +1,19 @@
+import logging
 from datetime import datetime, timedelta
-import logging, time
 
-from .tasklist import TaskListDevice
-from .const import DOMAIN
 from homeassistant import config_entries, core
-from .const import CONF_SCHOOLSCHEDULE
 from homeassistant.components.calendar import (
     CalendarEntity,
     CalendarEvent,
 )
 from homeassistant.util import Throttle
 
+from .const import CONF_SCHOOLSCHEDULE, DOMAIN
+from .tasklist import TaskListDevice
+
 _LOGGER = logging.getLogger(__name__)
 
-MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=10)
+MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=30)
 PARALLEL_UPDATES = 1
 
 
@@ -25,7 +25,6 @@ async def async_setup_entry(
     config = hass.data[DOMAIN][config_entry.entry_id]
     if config_entry.options:
         config.update(config_entry.options)
-    from .client import Client
 
     if not config[CONF_SCHOOLSCHEDULE] == True:
         return True
