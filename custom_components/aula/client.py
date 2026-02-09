@@ -64,6 +64,7 @@ class Client:
         self._auth_cookies = auth_cookies or {}
         self._cookie_persist_callback = cookie_persist_callback
         self._last_session_test = 0  # Rate limiting for session tests
+        self._last_data_update = 0  # Rate limiting for data updates
         self._last_profile_change_increment = None  # Track when profile_change was last incremented based on session token
         self._session_token_time = None  # Track session token initialization time
         self._schoolschedule = schoolschedule
@@ -1219,6 +1220,17 @@ class Client:
             )
 
     def update_data(self):
+        # Rate limiting: prevent multiple rapid data fetches within 30 seconds
+        current_time = time.time()
+        if current_time - self._last_data_update < 30:  # 30 seconds
+            _LOGGER.debug(
+                f"Data update rate limited, using cached result (last update: {current_time - self._last_data_update:.1f}s ago)"
+            )
+            return
+
+        self._last_data_update = current_time
+        _LOGGER.debug("Starting data update cycle...")
+
         # Try to reuse existing session first
         if (
             self._auth_cookies
@@ -2904,18 +2916,15 @@ class Client:
                 # Store thread in main mail dictionary
                 self.mail_threads[thread_id] = parsed_thread
 
-                # Group threads by related child profiles using profile IDs
+                # Group threads by related child profiles using sensor child IDs only
                 regarding_children = thread.get("regardingChildren", [])
                 regarding_child_ids = []
                 for child in regarding_children:
                     profile_id = str(child.get("profileId", ""))
                     if profile_id:
                         regarding_child_ids.append(profile_id)
-                        if profile_id not in self.mail_by_child:
-                            self.mail_by_child[profile_id] = []
-                        self.mail_by_child[profile_id].append(parsed_thread)
 
-                        # Also map by sensor child ID for easier access
+                        # Map by sensor child ID only (no duplication)
                         sensor_child_id = self._get_sensor_child_id_for_profile(
                             profile_id
                         )
