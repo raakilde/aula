@@ -1313,6 +1313,12 @@ class Client:
                 institution_profile_id = str(institutioncode["id"])
                 if institution_profile_id not in self._institutionProfileIdsList:
                     self._institutionProfileIdsList.append(institution_profile_id)
+
+        # Debug child mapping after initialization
+        _LOGGER.debug(
+            f"MAIL DEBUG: Initialized children with IDs: {[str(child['id']) for child in self._children]}"
+        )
+        _LOGGER.debug(f"MAIL DEBUG: Child names mapping: {self._childnames}")
         _LOGGER.debug("Child ids and names: " + str(self._childnames))
         _LOGGER.debug("Child ids and institution names: " + str(self._institutions))
         _LOGGER.debug(
@@ -1353,63 +1359,82 @@ class Client:
         self._get_closed_days()
 
         # Messages:
-        mesres = self._session.get(
-            self.apiurl
-            + "?method=messaging.getThreads&sortOn=date&orderDirection=desc&page=0",
-            verify=True,
-        )
-        # _LOGGER.debug("mesres "+str(mesres.text))
-        self.unread_messages = 0
-        unread = 0
-        self.message = {}
-        for mes in mesres.json()["data"]["threads"]:
-            if not mes["read"]:
-                # self.unread_messages = 1
-                unread = 1
-                threadid = mes["id"]
-                break
-        # if self.unread_messages == 1:
-        if unread == 1:
-            # _LOGGER.debug("tid "+str(threadid))
-            threadres = self._session.get(
+        try:
+            _LOGGER.debug(
+                "OLD MESSAGES: About to call messaging.getThreads (page 0 only)..."
+            )
+            mesres = self._session.get(
                 self.apiurl
-                + "?method=messaging.getMessagesForThread&threadId="
-                + str(threadid)
-                + "&page=0",
+                + "?method=messaging.getThreads&sortOn=date&orderDirection=desc&page=0",
                 verify=True,
             )
-            # _LOGGER.debug("threadres "+str(threadres.text))
-            if threadres.json()["status"]["code"] == 403:
-                self.message["text"] = (
-                    "Log ind på Aula med MitID for at læse denne besked."
+            _LOGGER.debug(f"OLD MESSAGES: Response status: {mesres.status_code}")
+            # _LOGGER.debug("mesres "+str(mesres.text))
+            self.unread_messages = 0
+            unread = 0
+            self.message = {}
+            for mes in mesres.json()["data"]["threads"]:
+                if not mes["read"]:
+                    # self.unread_messages = 1
+                    unread = 1
+                    threadid = mes["id"]
+                    break
+            _LOGGER.debug(f"OLD MESSAGES: Found unread messages: {unread}")
+        except Exception as e:
+            _LOGGER.error(f"OLD MESSAGES: Failed to fetch messages: {e}")
+            self.unread_messages = 0
+            unread = 0
+            self.message = {}
+
+        # Continue with unread message details (also within try-catch)
+        try:
+            # if self.unread_messages == 1:
+            if unread == 1:
+                # _LOGGER.debug("tid "+str(threadid))
+                threadres = self._session.get(
+                    self.apiurl
+                    + "?method=messaging.getMessagesForThread&threadId="
+                    + str(threadid)
+                    + "&page=0",
+                    verify=True,
                 )
-                self.message["sender"] = "Ukendt afsender"
-                self.message["subject"] = "Følsom besked"
-            else:
-                for message in threadres.json()["data"]["messages"]:
-                    if message["messageType"] == "Message":
-                        try:
-                            self.message["text"] = message["text"]["html"]
-                        except:
+                # _LOGGER.debug("threadres "+str(threadres.text))
+                if threadres.json()["status"]["code"] == 403:
+                    self.message["text"] = (
+                        "Log ind på Aula med MitID for at læse denne besked."
+                    )
+                    self.message["sender"] = "Ukendt afsender"
+                    self.message["subject"] = "Følsom besked"
+                else:
+                    for message in threadres.json()["data"]["messages"]:
+                        if message["messageType"] == "Message":
                             try:
-                                self.message["text"] = message["text"]
+                                self.message["text"] = message["text"]["html"]
                             except:
-                                self.message["text"] = "intet indhold..."
-                                _LOGGER.warning(
-                                    "There is an unread message, but we cannot get the text."
-                                )
-                        try:
-                            self.message["sender"] = message["sender"]["fullName"]
-                        except:
-                            self.message["sender"] = "Ukendt afsender"
-                        try:
-                            self.message["subject"] = threadres.json()["data"][
-                                "subject"
-                            ]
-                        except:
-                            self.message["subject"] = ""
-                        self.unread_messages = 1
-                        break
+                                try:
+                                    self.message["text"] = message["text"]
+                                except:
+                                    self.message["text"] = "intet indhold..."
+                                    _LOGGER.warning(
+                                        "There is an unread message, but we cannot get the text."
+                                    )
+                            try:
+                                self.message["sender"] = message["sender"]["fullName"]
+                            except:
+                                self.message["sender"] = "Ukendt afsender"
+                            try:
+                                self.message["subject"] = threadres.json()["data"][
+                                    "subject"
+                                ]
+                            except:
+                                self.message["subject"] = ""
+                            self.unread_messages = 1
+                            break
+        except Exception as e:
+            _LOGGER.error(f"OLD MESSAGES: Failed to fetch unread message details: {e}")
+            self.unread_messages = 0
+
+        _LOGGER.debug("OLD MESSAGES: Section completed, continuing to Calendar...")
 
         # Calendar:
         if self._schoolschedule == True:
@@ -1895,6 +1920,34 @@ class Client:
             # Initialize empty posts data on error
             self.posts = {}
             self.posts_by_child = {}
+
+        # Debug checkpoint before mail section
+        _LOGGER.info("DEBUG: About to start mail section...")
+
+        # Test mail API first
+        _LOGGER.info("MAIL TEST: Running simple mail API test...")
+        self.test_mail_api_simple()
+
+        # Mail Threads:
+        _LOGGER.info("MAIL: About to call _get_mail()...")
+        try:
+            self._get_mail()
+            _LOGGER.info("MAIL: _get_mail() completed successfully")
+            _LOGGER.info(
+                f"MAIL: Retrieved {len(getattr(self, 'mail_threads', {}))} total mail threads"
+            )
+            _LOGGER.info(
+                f"MAIL: Mail distribution: {[(k, len(v)) for k, v in getattr(self, 'mail_by_child', {}).items()]}"
+            )
+        except Exception as e:
+            _LOGGER.error(f"MAIL: _get_mail() failed with error: {e}")
+            _LOGGER.error(f"MAIL: Exception type: {type(e).__name__}")
+            import traceback
+
+            traceback.print_exc()
+            # Initialize empty mail data on error
+            self.mail_threads = {}
+            self.mail_by_child = {}
 
     def _get_presence_templates(self):
         """Get weekly schedule presence templates (current and next week)"""
@@ -2386,6 +2439,10 @@ class Client:
             self.posts = {}
             self.posts_by_child = {}
 
+            # Initialize mail data
+            self.mail_threads = {}
+            self.mail_by_child = {}
+
             # Build filter parameters for institution profiles
             filter_params = ""
             if self._institutionProfileIdsList:
@@ -2412,12 +2469,7 @@ class Client:
                 20,
                 30,
                 40,
-                50,
-                60,
-                70,
-                80,
-                90,
-            ]:  # Fetch 10 pages of 10 posts each = 100 posts
+            ]:  # Fetch 5 pages of 10 posts each = 50 posts
                 try:
                     posts_url = f"{self.apiurl}?method=posts.getAllPosts&parent=profile&index={index}&limit=10{filter_params}"
                     _LOGGER.debug(
@@ -2674,3 +2726,300 @@ class Client:
                 }
             )
         return profiles
+
+    def test_mail_api_simple(self):
+        """Simple test of mail API for debugging"""
+        try:
+            _LOGGER.info("MAIL TEST: Testing basic mail API call...")
+            if not hasattr(self, "_session") or not self._session:
+                _LOGGER.error("MAIL TEST: No session available")
+                return False
+
+            url = f"{self.apiurl}?method=messaging.getThreads&sortOn=date&orderDirection=desc&page=0"
+            _LOGGER.info(f"MAIL TEST: Calling URL: {url}")
+
+            response = self._session.get(url, verify=True, timeout=10)
+            _LOGGER.info(f"MAIL TEST: Response status: {response.status_code}")
+
+            if response.status_code == 200:
+                data = response.json()
+                _LOGGER.info(
+                    f"MAIL TEST: Response status message: {data.get('status', {}).get('message', 'UNKNOWN')}"
+                )
+                threads = data.get("data", {}).get("threads", [])
+                _LOGGER.info(f"MAIL TEST: Found {len(threads)} threads")
+
+                for i, thread in enumerate(threads[:3]):  # Log first 3 threads
+                    regarding_children = thread.get("regardingChildren", [])
+                    profile_ids = [
+                        str(child.get("profileId", "")) for child in regarding_children
+                    ]
+                    _LOGGER.info(
+                        f"MAIL TEST: Thread {i + 1}: '{thread.get('subject', 'NO_SUBJECT')}' - Profile IDs: {profile_ids}"
+                    )
+
+                return True
+            else:
+                _LOGGER.error(
+                    f"MAIL TEST: API call failed with status {response.status_code}"
+                )
+                return False
+
+        except Exception as e:
+            _LOGGER.error(f"MAIL TEST: Exception occurred: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return False
+
+    def _get_mail(self):
+        """Fetch mail threads from Aula messaging system"""
+        try:
+            _LOGGER.info("MAIL: Starting to fetch mail threads...")
+
+            # Debug current session cookies
+            current_cookies = self._session.cookies.get_dict() if self._session else {}
+            _LOGGER.info(f"MAIL: Current session cookies: {current_cookies}")
+            _LOGGER.info(
+                f"MAIL: Current profile_change: {current_cookies.get('profile_change', 'NOT_SET')}"
+            )
+
+            # Initialize mail data
+            self.mail_threads = {}
+            self.mail_by_child = {}
+            self.mail_child_profile_mapping = {}
+
+            # Fetch multiple pages of mail threads (50 threads total)
+            all_threads = []
+            for page in range(5):  # Fetch 5 pages of 10 threads each = 50 threads
+                try:
+                    mail_url = f"{self.apiurl}?method=messaging.getThreads&sortOn=date&orderDirection=desc&page={page}"
+                    _LOGGER.debug(f"MAIL: Fetching page {page + 1} from: {mail_url}")
+
+                    response = self._session.get(mail_url, verify=True, timeout=15)
+                    _LOGGER.debug(
+                        f"MAIL: Page {page + 1} response status: {response.status_code}"
+                    )
+
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result.get("status", {}).get("message") == "OK":
+                            threads_data = result.get("data", {}).get("threads", [])
+                            if threads_data:
+                                all_threads.extend(threads_data)
+                                _LOGGER.info(
+                                    f"MAIL: Retrieved {len(threads_data)} threads from page {page + 1}"
+                                )
+
+                                # Stop if no more messages exist
+                                if not result.get("data", {}).get(
+                                    "moreMessagesExist", False
+                                ):
+                                    _LOGGER.info(
+                                        f"MAIL: No more threads available after page {page + 1}"
+                                    )
+                                    break
+                            else:
+                                _LOGGER.info(
+                                    f"MAIL: No threads found on page {page + 1}, stopping pagination"
+                                )
+                                break
+                        else:
+                            _LOGGER.warning(
+                                f"MAIL: API returned non-OK status on page {page}: {result.get('status', {})}"
+                            )
+                            break
+                    else:
+                        _LOGGER.warning(
+                            f"MAIL: API request failed on page {page} with status {response.status_code}"
+                        )
+                        break
+
+                except Exception as page_error:
+                    _LOGGER.error(f"MAIL: Error fetching page {page}: {page_error}")
+                    break
+
+            _LOGGER.info(
+                f"MAIL: Retrieved total of {len(all_threads)} mail threads across all pages"
+            )
+
+            if all_threads:
+                self._parse_mail_data(all_threads)
+            _LOGGER.info(
+                f"MAIL: Successfully processed {len(self.mail_threads)} mail threads"
+            )
+            _LOGGER.info(
+                f"MAIL: Mail distribution by child: {[(child_id, len(threads)) for child_id, threads in self.mail_by_child.items()]}"
+            )
+
+            # Debug child ID mapping
+            _LOGGER.debug(
+                f"MAIL: Available child IDs from _children: {[str(child['id']) for child in getattr(self, '_children', [])]}"
+            )
+            _LOGGER.debug(
+                f"MAIL: Mail threads stored for child IDs: {list(self.mail_by_child.keys())}"
+            )
+
+        except Exception as e:
+            _LOGGER.error(f"MAIL: Error in _get_mail: {e}", exc_info=True)
+            self.mail_threads = {}
+            self.mail_by_child = {}
+
+    def _parse_mail_data(self, threads_data):
+        """Parse mail threads data from getThreads API response"""
+        try:
+            _LOGGER.info("MAIL: Starting to parse mail threads data")
+
+            self.mail_threads = {}
+            self.mail_by_child = {}
+            # Create mapping between child IDs and regardingChildren profileIds
+            self._create_mail_child_mapping(threads_data)
+
+            for thread in threads_data:
+                thread_id = str(thread.get("id", ""))
+                if not thread_id:
+                    continue
+
+                # Extract thread information
+                parsed_thread = {
+                    "id": thread_id,
+                    "subject": thread.get("subject", ""),
+                    "read": thread.get("read", False),
+                    "muted": thread.get("muted", False),
+                    "marked": thread.get("marked", False),
+                    "sensitive": thread.get("sensitive", False),
+                    "started_time": thread.get("startedTime", ""),
+                    "latest_message": self._extract_latest_message(
+                        thread.get("latestMessage", {})
+                    ),
+                    "creator": self._extract_thread_creator(thread.get("creator", {})),
+                    "regarding_children": self._extract_regarding_children(
+                        thread.get("regardingChildren", [])
+                    ),
+                    "recipients_count": len(thread.get("recipients", []))
+                    + (thread.get("extraRecipientsCount") or 0),
+                    "institution_code": thread.get("institutionCode", ""),
+                }
+
+                # Store thread in main mail dictionary
+                self.mail_threads[thread_id] = parsed_thread
+
+                # Group threads by related child profiles using profile IDs
+                regarding_children = thread.get("regardingChildren", [])
+                regarding_child_ids = []
+                for child in regarding_children:
+                    profile_id = str(child.get("profileId", ""))
+                    if profile_id:
+                        regarding_child_ids.append(profile_id)
+                        if profile_id not in self.mail_by_child:
+                            self.mail_by_child[profile_id] = []
+                        self.mail_by_child[profile_id].append(parsed_thread)
+
+                        # Also map by sensor child ID for easier access
+                        sensor_child_id = self._get_sensor_child_id_for_profile(
+                            profile_id
+                        )
+                        if sensor_child_id:
+                            if sensor_child_id not in self.mail_by_child:
+                                self.mail_by_child[sensor_child_id] = []
+                            self.mail_by_child[sensor_child_id].append(parsed_thread)
+
+                _LOGGER.debug(
+                    f"MAIL: Parsed thread {thread_id}: '{parsed_thread['subject']}' regarding children: {regarding_child_ids}"
+                )
+
+            _LOGGER.info(
+                f"MAIL: Successfully parsed {len(self.mail_threads)} mail threads for {len(self.mail_by_child)} children"
+            )
+        except Exception as e:
+            _LOGGER.error(f"MAIL: Error parsing mail data: {e}", exc_info=True)
+            self.mail_threads = {}
+            self.mail_by_child = {}
+
+    def _create_mail_child_mapping(self, threads_data):
+        """Create mapping between sensor child IDs and regardingChildren profile IDs"""
+        try:
+            # Extract profile IDs and display names from mail threads
+            profile_name_map = {}
+            for thread in threads_data:
+                regarding_children = thread.get("regardingChildren", [])
+                for child in regarding_children:
+                    profile_id = str(child.get("profileId", ""))
+                    display_name = child.get("displayName", "")
+                    if profile_id and display_name:
+                        profile_name_map[profile_id] = display_name
+
+            # Match with existing child names to create mapping
+            self.mail_child_profile_mapping = {}
+            for child_id, child_name in self._childnames.items():
+                child_id_str = str(child_id)
+                # Find matching profile by name
+                for profile_id, display_name in profile_name_map.items():
+                    if child_name.strip() == display_name.strip():
+                        self.mail_child_profile_mapping[child_id_str] = profile_id
+                        _LOGGER.debug(
+                            f"MAIL: Mapped sensor child ID {child_id_str} ({child_name}) to profile ID {profile_id} ({display_name})"
+                        )
+                        break
+
+            _LOGGER.info(
+                f"MAIL: Created child profile mapping: {self.mail_child_profile_mapping}"
+            )
+
+        except Exception as e:
+            _LOGGER.error(f"MAIL: Error creating child mapping: {e}", exc_info=True)
+            self.mail_child_profile_mapping = {}
+
+    def _get_sensor_child_id_for_profile(self, profile_id):
+        """Get sensor child ID for a regardingChildren profile ID"""
+        for (
+            sensor_child_id,
+            mapped_profile_id,
+        ) in self.mail_child_profile_mapping.items():
+            if mapped_profile_id == profile_id:
+                return sensor_child_id
+        return None
+
+    def _extract_latest_message(self, latest_message):
+        """Extract latest message information from a thread"""
+        if not latest_message:
+            return {}
+
+        # Clean HTML content for text preview
+        html_content = latest_message.get("text", {}).get("html", "")
+        import re
+
+        clean_text = re.sub(r"<[^>]+>", "", html_content)
+        clean_text = re.sub(r"\s+", " ", clean_text).strip()
+
+        return {
+            "id": latest_message.get("id", ""),
+            "send_date_time": latest_message.get("sendDateTime", ""),
+            "text_html": html_content,
+            "text_clean": clean_text,
+        }
+
+    def _extract_thread_creator(self, creator):
+        """Extract thread creator information"""
+        if not creator:
+            return {}
+
+        return {
+            "full_name": creator.get("fullName", ""),
+            "metadata": creator.get("metadata", ""),
+            "answer_directly_name": creator.get("answerDirectlyName", ""),
+        }
+
+    def _extract_regarding_children(self, regarding_children):
+        """Extract information about children the thread regards"""
+        extracted_children = []
+        for child in regarding_children:
+            if child:
+                extracted_children.append(
+                    {
+                        "profile_id": str(child.get("profileId", "")),
+                        "display_name": child.get("displayName", ""),
+                        "short_name": child.get("shortName", ""),
+                    }
+                )
+        return extracted_children
