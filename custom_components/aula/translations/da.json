@@ -19,7 +19,7 @@
           "schoolschedule": "Tilføj skoleskemaer som kalender entiteter?",
           "ugeplan": "Tilføj ugeplaner som sensor attributter?"
         },
-        "description": "Opsæt din Aula integration ved at angive session cookies og vælge funktioner. {instructions}",
+        "description": "Angiv session cookies fra din browser efter login på aula.dk med MitID. API tokens hentes automatisk - du behøver kun cookies. Andre funktioner (bibliotek, undervisningsmoduler) opdages automatisk fra din konto.",
         "title": "Aula Opsætning"
       }
     }

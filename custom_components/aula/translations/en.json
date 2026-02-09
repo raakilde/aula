@@ -14,11 +14,12 @@
     "step": {
       "user": {
         "data": {
+          "session_cookies": "Session cookies from browser",
           "schoolschedule": "Add school schedules as calendar entities?",
           "ugeplan": "Add ugeplaner as sensor attributes?"
         },
-        "description": "Select which Aula features you want to enable.",
-        "title": "Aula Features"
+        "description": "Provide session cookies from your browser after logging into aula.dk with MitID. API tokens are fetched automatically - you only need cookies. Other features (library, education modules) are auto-detected from your account.",
+        "title": "Aula Setup"
       }
     }
   },

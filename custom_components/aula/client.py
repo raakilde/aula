@@ -55,10 +55,6 @@ class Client:
         self,
         schoolschedule,
         ugeplan,
-        bibliotek,
-        minUddannelseForloeb,
-        minUddannelseOpgaveListe,
-        minUddannelseUgeNote,
         auth_cookies=None,
         cookie_persist_callback=None,
     ):
@@ -70,12 +66,15 @@ class Client:
         self._session_token_time = None  # Track session token initialization time
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
-        self._bibliotek = bibliotek
-        self._minUddannelseForloeb = minUddannelseForloeb
-        self._minUddannelseOpgaveListe = minUddannelseOpgaveListe
-        self._minUddannelseUgeNote = minUddannelseUgeNote
+        # Widget-based features now auto-detected from API
+        self._bibliotek = None  # Auto-detected
+        self._minUddannelseForloeb = None  # Auto-detected
+        self._minUddannelseOpgaveListe = None  # Auto-detected
+        self._minUddannelseUgeNote = None  # Auto-detected
         self._minUddannelse = MinUddannelse(
-            minUddannelseForloeb, minUddannelseOpgaveListe, minUddannelseUgeNote
+            None,
+            None,
+            None,  # Will be set dynamically based on widget availability
         )
 
     def _check_browser_environment(self):
@@ -1024,10 +1023,58 @@ class Client:
                 _LOGGER.debug(
                     "Widgets found from profile context: " + str(self.widgets)
                 )
+
+                # Dynamically set widget flags based on detected widgets and institution appropriateness
+                self._bibliotek = self._should_enable_widget("0019")  # Library
+                self._minUddannelseForloeb = self._should_enable_widget(
+                    "0028"
+                )  # Education/Learning
+                self._minUddannelseOpgaveListe = self._should_enable_widget(
+                    "0028"
+                )  # Same widget for different features
+                self._minUddannelseUgeNote = self._should_enable_widget(
+                    "0028"
+                )  # Same widget for different features
+
+                # Update MinUddannelse instance with dynamic settings
+                if hasattr(self, "_minUddannelse"):
+                    self._minUddannelse._minUddannelseForloeb = (
+                        self._minUddannelseForloeb
+                    )
+                    self._minUddannelse._minUddannelseOpgaveListe = (
+                        self._minUddannelseOpgaveListe
+                    )
+                    self._minUddannelse._minUddannelseugenote = (
+                        self._minUddannelseUgeNote
+                    )
+                else:
+                    # Create MinUddannelse if not already exists
+                    self._minUddannelse = MinUddannelse(
+                        self._minUddannelseForloeb,
+                        self._minUddannelseOpgaveListe,
+                        self._minUddannelseUgeNote,
+                    )
+
+                _LOGGER.info(
+                    f"Dynamic widget flags set: bibliotek={self._bibliotek}, minUddannelse_forloeb={self._minUddannelseForloeb}, minUddannelse_opgaveliste={self._minUddannelseOpgaveListe}, minUddannelse_ugenote={self._minUddannelseUgeNote}"
+                )
+
             else:
                 _LOGGER.warning("Failed to get profile context for widgets")
         except Exception as e:
             _LOGGER.error(f"Error getting widgets from profile context: {e}")
+
+    def _should_enable_widget(self, widget_id):
+        """Check if a widget should be enabled based on availability and institution appropriateness"""
+        if widget_id not in self.widgets:
+            return False
+
+        # Check if any child has an institution type where this widget is appropriate
+        for child_id, institution_type in self._institution_types.items():
+            if self.is_widget_appropriate_for_institution(widget_id, institution_type):
+                return True
+
+        return False
 
     def is_widget_appropriate_for_institution(self, widget_id, institution_type):
         """Check if a widget is appropriate for a specific institution type"""
@@ -1280,9 +1327,7 @@ class Client:
         _LOGGER.debug("Child ids and presence data status: " + str(self.presence))
 
         # Weekly Presence (Komme og Gå):
-        _LOGGER.error("TESTING: About to call _get_weekly_presence()...")
         self._get_weekly_presence()
-        _LOGGER.error("TESTING: Completed _get_weekly_presence() call")
 
         # Presence Templates (Weekly Schedule):
         self._get_presence_templates()

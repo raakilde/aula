@@ -15,25 +15,17 @@
         "data": {
           "session_cookies": "Session cookies from browser",
           "schoolschedule": "Add school schedules as calendar entities?",
-          "ugeplan": "Add ugeplaner as sensor attributes?",
-          "bibliotek": "Add bibliotek as sensor attributes?",
-          "minUddannelseForloeb": "Add min uddannelse forløb as sensor attributes?",
-          "minUddannelseOpgaveListe": "Add min uddannelse opgave liste as sensor attributes?",
-          "minUddannelseUgeNote": "Add min uddannelse uge note as sensor attributes?"
+          "ugeplan": "Add ugeplaner as sensor attributes?"
         },
-        "description": "Setup your Aula integration by providing session cookies and selecting features. {instructions}",
+        "description": "Setup your Aula integration by providing session cookies and selecting features. API tokens are fetched automatically - you only need cookies. Other features are auto-detected from your account.",
         "title": "Aula Setup"
       },
       "options": {
         "data": {
           "schoolschedule": "Add school schedules as calendar entities?",
-          "ugeplan": "Add ugeplaner as sensor attributes?",
-          "bibliotek": "Add bibliotek as sensor attributes?",
-          "minUddannelseForloeb": "Add min uddannelse forløb as sensor attributes?",
-          "minUddannelseOpgaveListe": "Add min uddannelse opgave lsite as sensor attributes?",
-          "minUddannelseUgeNote": "Add min uddannelse uge note as sensor attributes?"
+          "ugeplan": "Add ugeplaner as sensor attributes?"
         },
-        "description": "",
+        "description": "Update configuration options. Note: Other features (library, education modules) are auto-detected and cannot be manually disabled.",
         "title": "Options"
       }
     }

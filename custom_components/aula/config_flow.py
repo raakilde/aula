@@ -107,36 +107,12 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="user",
                 data_schema=SETUP_SCHEMA,
                 errors=errors,
-                description_placeholders={
-                    "instructions": """**Setup your Aula integration:**
-
-1. Open https://www.aula.dk in your browser
-2. Login with MitID (complete authentication)
-3. Open Developer Tools (F12) → Application → Cookies → https://www.aula.dk
-4. Copy cookies in either format:
-
-**Browser format:** initialLogin=true; Csrfp-Token=abc123; PHPSESSID=def456; profile_change=17
-
-**JSON format:** {"PHPSESSID": "def456", "Csrfp-Token": "abc123", "profile_change": "17", "initialLogin": "true"}""",
-                },
             )
 
         # Show initial form
         return self.async_show_form(
             step_id="user",
             data_schema=SETUP_SCHEMA,
-            description_placeholders={
-                "instructions": """**Setup your Aula integration:**
-
-1. Open https://www.aula.dk in your browser
-2. Login with MitID (complete authentication)
-3. Open Developer Tools (F12) → Application → Cookies → https://www.aula.dk
-4. Copy cookies in either format:
-
-**Browser format:** initialLogin=true; Csrfp-Token=abc123; PHPSESSID=def456; profile_change=17
-
-**JSON format:** {"PHPSESSID": "def456", "Csrfp-Token": "abc123", "profile_change": "17", "initialLogin": "true"}""",
-            },
         )
 
     @staticmethod
@@ -209,7 +185,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 2. Login with MitID (complete authentication)
 3. Open Developer Tools (F12) → Application → Cookies → https://www.aula.dk
 4. Copy cookies as JSON format:
-   {"PHPSESSID": "abc123", "Csrfp-Token": "def456", "profile_change": "13", "initialLogin": "true"}""",
+   {"PHPSESSID": "abc123", "Csrfp-Token": "def456", "profile_change": "13", "initialLogin": "true"}
+
+**Note:** Tokens hentes automatisk via dine cookies - du behøver ikke finde dem manuelt!""",
                     },
                 )
             except Exception as e:
@@ -231,6 +209,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 3. Open Developer Tools (F12) → Application → Cookies → https://www.aula.dk
 4. Copy ALL cookies as JSON format:
    {"PHPSESSID": "abc123", "Csrfp-Token": "def456", "profile_change": "13", "initialLogin": "true"}
+
+**Note:** API tokens hentes automatisk via dine cookies - du skal kun opdatere cookies!
 
 **Current cookies:** {current_cookies}""",
             },

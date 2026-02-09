@@ -17,10 +17,6 @@ _LOGGER = logging.getLogger(__name__)
 
 from .const import (
     CONF_AUTH_COOKIES,
-    CONF_BIBLIOTEK,
-    CONF_MINUDANNELSEFORLOEB,
-    CONF_MINUDANNELSEOPGAVELISTE,
-    CONF_MINUDANNELSEUGENOTE,
     CONF_SCHOOLSCHEDULE,
     CONF_UGEPLAN,
 )
@@ -75,10 +71,6 @@ async def async_setup_entry(
     client = Client(
         config[CONF_SCHOOLSCHEDULE],
         config[CONF_UGEPLAN],
-        config[CONF_BIBLIOTEK],
-        config[CONF_MINUDANNELSEFORLOEB],
-        config[CONF_MINUDANNELSEOPGAVELISTE],
-        config[CONF_MINUDANNELSEUGENOTE],
         config.get(CONF_AUTH_COOKIES, {}),
         cookie_persist_callback=persist_cookies_callback,
     )
@@ -102,9 +94,8 @@ async def async_setup_entry(
 
     entities = []
     client = hass.data[DOMAIN]["client"]
-    await hass.async_add_executor_job(client.update_data)
 
-    # Get available widgets (will be populated during update_data)
+    # Get available widgets (populated during coordinator refresh)
     available_widgets = getattr(client, "widgets", {})
     _LOGGER.debug(
         f"Available widgets for institution: {list(available_widgets.keys())}"
