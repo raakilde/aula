@@ -17,11 +17,7 @@
         "data": {
           "session_cookies": "Session cookies fra browser",
           "schoolschedule": "Tilføj skoleskemaer som kalender entiteter?",
-          "ugeplan": "Tilføj ugeplaner som sensor attributter?",
-          "bibliotek": "Tilføj bibliotek som sensor attributter?",
-          "minUddannelseForloeb": "Tilføj min uddannelse forløb som sensor attributter?",
-          "minUddannelseOpgaveListe": "Tilføj min uddannelse opgave liste som sensor attributter?",
-          "minUddannelseUgeNote": "Tilføj min uddannelse uge note som sensor attributter?"
+          "ugeplan": "Tilføj ugeplaner som sensor attributter?"
         },
         "description": "Opsæt din Aula integration ved at angive session cookies og vælge funktioner. {instructions}",
         "title": "Aula Opsætning"
@@ -77,6 +73,22 @@
       },
       "weekly_schedule_next": {
         "name": "Ugeplan Næste Uge - {child_name}"
+      },
+      "closed_days": {
+        "name": "Lukkedage",
+        "state": {
+          "today": "I dag",
+          "tomorrow": "I morgen",
+          "ongoing": "Pågående",
+          "none_scheduled": "Ingen planlagt",
+          "unavailable": "Ikke tilgængelig"
+        }
+      },
+      "weekly_presence": {
+        "name": "Ugentligt Fremmøde - {child_name}"
+      },
+      "weekly_presence_next": {
+        "name": "Ugentligt Fremmøde Næste Uge - {child_name}"
       }
     },
     "calendar": {

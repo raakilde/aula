@@ -14,13 +14,14 @@ https://github.com/raakilde/aula/issues
 
 DOMAIN = "aula"
 API = "https://www.aula.dk/api/v"
-API_VERSION = "17"
+API_VERSION = "22"
 MIN_UDDANNELSE_API = "https://api.minuddannelse.net/aula"
 MEEBOOK_API = "https://app.meebook.com/aulaapi"
 SYSTEMATIC_API = "https://systematic-momo.dk/api/aula"
 CICERO_API = "https://surf.cicero-suite.com"
 CONF_SCHOOLSCHEDULE = "schoolschedule"
 CONF_UGEPLAN = "ugeplan"
+# Widget-based features are now auto-detected from API
 CONF_BIBLIOTEK = "bibliotek"
 CONF_MINUDANNELSEFORLOEB = "minUddannelseForloeb"
 CONF_MINUDANNELSEOPGAVELISTE = "minUddannelseOpgaveListe"

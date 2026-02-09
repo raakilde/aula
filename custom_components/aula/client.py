@@ -39,6 +39,8 @@ class Client:
     presence_templates = {}
     presence_templates_next = {}
     closed_days = {}
+    weekly_presence_current = {}
+    weekly_presence_next = {}
     ugep_attr = {}
     ugepnext_attr = {}
     widgets = {}
@@ -917,61 +919,50 @@ class Client:
             # Find the API version and setup endpoints
             self.apiurl = API + API_VERSION
             apiver = int(API_VERSION)
-            api_success = False
 
-            while not api_success:
-                _LOGGER.debug("Trying API at " + self.apiurl)
-                try:
-                    ver = self._session.get(
-                        self.apiurl + "?method=profiles.getProfilesByLogin",
-                        verify=True,
-                        timeout=10,
+            # Use API v22 directly - no version detection needed
+            _LOGGER.debug(f"Using API v{apiver} at " + self.apiurl)
+            try:
+                ver = self._session.get(
+                    self.apiurl + "?method=profiles.getProfilesByLogin",
+                    verify=True,
+                    timeout=10,
+                )
+
+                if ver.status_code == 403:
+                    msg = "Access to Aula API was denied. Please check your authentication."
+                    _LOGGER.error(msg)
+                    raise ConfigEntryNotReady(msg)
+                elif ver.status_code == 200:
+                    try:
+                        response_data = ver.json()
+                        if (
+                            "data" in response_data
+                            and "profiles" in response_data["data"]
+                        ):
+                            self._profiles = response_data["data"]["profiles"]
+                            _LOGGER.info(f"Successfully connected to API {self.apiurl}")
+                        else:
+                            _LOGGER.error(
+                                "API response missing expected data structure"
+                            )
+                            raise ConfigEntryNotReady(
+                                "API response missing expected data structure"
+                            )
+                    except ValueError as e:
+                        _LOGGER.error(f"Invalid JSON response from API: {e}")
+                        raise ConfigEntryNotReady(
+                            f"Invalid JSON response from API: {e}"
+                        )
+                else:
+                    _LOGGER.error(f"API returned unexpected status: {ver.status_code}")
+                    raise ConfigEntryNotReady(
+                        f"API returned unexpected status: {ver.status_code}"
                     )
 
-                    if ver.status_code == 410:
-                        _LOGGER.debug(
-                            f"API version {apiver} not supported, trying newer version"
-                        )
-                        apiver += 1
-                        self.apiurl = API + str(apiver)
-                        if apiver > 25:  # Safety limit
-                            break
-                    elif ver.status_code == 403:
-                        msg = "Access to Aula API was denied. Please check your authentication."
-                        _LOGGER.error(msg)
-                        raise ConfigEntryNotReady(msg)
-                    elif ver.status_code == 200:
-                        try:
-                            response_data = ver.json()
-                            if (
-                                "data" in response_data
-                                and "profiles" in response_data["data"]
-                            ):
-                                self._profiles = response_data["data"]["profiles"]
-                                api_success = True
-                                _LOGGER.info(
-                                    f"Successfully connected to API {self.apiurl}"
-                                )
-                            else:
-                                _LOGGER.error(
-                                    "API response missing expected data structure"
-                                )
-                                break
-                        except ValueError as e:
-                            _LOGGER.error(f"Invalid JSON response from API: {e}")
-                            break
-                    else:
-                        _LOGGER.error(
-                            f"API returned unexpected status: {ver.status_code}"
-                        )
-                        break
-
-                except requests.exceptions.RequestException as e:
-                    _LOGGER.error(f"API request failed: {e}")
-                    break
-
-            if not api_success:
-                raise ConfigEntryNotReady("Failed to connect to Aula API")
+            except requests.exceptions.RequestException as e:
+                _LOGGER.error(f"API request failed: {e}")
+                raise ConfigEntryNotReady(f"API request failed: {e}")
 
             # Get profile context
             try:
@@ -999,7 +990,7 @@ class Client:
         except Exception as e:
             _LOGGER.error(f"Post-login setup failed: {e}")
             raise
-        _LOGGER.debug("LOGIN: " + str(success))
+
         _LOGGER.debug(
             "Config - schoolschedule: "
             + str(self._schoolschedule)
@@ -1008,16 +999,130 @@ class Client:
         )
 
     def get_widgets(self):
-        detected_widgets = self._session.get(
-            self.apiurl + "?method=profiles.getProfileContext", verify=True
-        )
-        for widget in detected_widgets.json()["data"]["pageConfiguration"][
-            "widgetConfigurations"
-        ]:
-            widgetid = str(widget["widget"]["widgetId"])
-            widgetname = widget["widget"]["name"]
-            self.widgets[widgetid] = widgetname
-        _LOGGER.debug("Widgets found: " + str(self.widgets))
+        try:
+            # Use profiles.getProfileContext to get widget configurations
+            response = self._session.get(
+                self.apiurl + "?method=profiles.getProfileContext", verify=True
+            )
+            profile_context = response.json()
+
+            if profile_context.get("status", {}).get("message") == "OK":
+                widget_configs = (
+                    profile_context.get("data", {})
+                    .get("pageConfiguration", {})
+                    .get("widgetConfigurations", [])
+                )
+
+                # Extract widget IDs and names from the configuration
+                for widget_config in widget_configs:
+                    widget = widget_config.get("widget", {})
+                    widget_id = widget.get("widgetId", "")
+                    widget_name = widget.get("name", "")
+                    if widget_id and widget_name:
+                        self.widgets[widget_id] = widget_name
+
+                _LOGGER.debug(
+                    "Widgets found from profile context: " + str(self.widgets)
+                )
+            else:
+                _LOGGER.warning("Failed to get profile context for widgets")
+        except Exception as e:
+            _LOGGER.error(f"Error getting widgets from profile context: {e}")
+
+    def is_widget_appropriate_for_institution(self, widget_id, institution_type):
+        """Check if a widget is appropriate for a specific institution type"""
+        # Widgets that are only appropriate for schools (not kindergartens)
+        school_only_widgets = {
+            "0019": "Library",  # Libraries typically not available in kindergartens
+            "0028": "Education/Learning",  # Advanced learning features for schools
+            "0062": "Reminders",  # Reminder system more relevant for older students
+        }
+
+        # If it's a kindergarten and the widget is school-only, return False
+        if institution_type == "kindergarten" and widget_id in school_only_widgets:
+            _LOGGER.debug(
+                f"Widget {widget_id} ({school_only_widgets[widget_id]}) filtered out for kindergarten"
+            )
+            return False
+
+        # All other widgets (attendance, schedules, etc.) are appropriate for all types
+        return True
+
+    def _detect_institution_type(self, institution_profile):
+        """Detect institution type from profile data"""
+        # First try to get institution type from the institution object
+        if "institution" in institution_profile and institution_profile[
+            "institution"
+        ].get("type"):
+            institution_type = institution_profile["institution"]["type"].lower()
+            # Map API types to our standardized names
+            if institution_type == "daycare":
+                return "kindergarten"
+            elif institution_type == "school":
+                return "school"
+            else:
+                return institution_type
+
+        # Fallback check for institutionType field
+        if institution_profile.get("institutionType"):
+            institution_type = institution_profile["institutionType"].lower()
+            if institution_type == "daycare":
+                return "kindergarten"
+            elif institution_type == "school":
+                return "school"
+            else:
+                return institution_type
+
+        # Fallback detection based on name and metadata
+        institution_name = institution_profile.get("institutionName", "").lower()
+        metadata = institution_profile.get("metadata", "").lower()
+
+        # Common kindergarten indicators
+        kindergarten_keywords = [
+            "børnehave",
+            "vuggestue",
+            "dagpleje",
+            "kindergarten",
+            "pionererne",
+            "gardikjærgård",
+            "gadkjærgård",
+            "børnehus",
+            "dagplejen",
+        ]
+
+        # Common school indicators
+        school_keywords = [
+            "skole",
+            "school",
+            "gymnasium",
+            "erhvervsskole",
+            "teknisk skole",
+            "handelsskole",
+            "hf",
+            "ht",
+        ]
+
+        for keyword in kindergarten_keywords:
+            if keyword in institution_name or keyword in metadata:
+                return "kindergarten"
+
+        for keyword in school_keywords:
+            if keyword in institution_name or keyword in metadata:
+                return "school"
+
+        # Check if metadata contains class indicators (like "2.3" for 2nd grade class 3)
+        import re
+
+        if re.match(r"^\d+\.\d+$", metadata.strip()):
+            return "school"
+
+        # Default fallback based on institution name patterns
+        if "skole" in institution_name:
+            return "school"
+        elif any(kw in institution_name for kw in ["gård", "hus", "have"]):
+            return "kindergarten"
+
+        return "unknown"
 
     def get_token(self, widgetid, mock=False):
         """Get Bearer token for specific widget API calls"""
@@ -1118,6 +1223,7 @@ class Client:
 
         self._childnames = {}
         self._institutions = {}
+        self._institution_types = {}
         self._childuserids = []
         self._childids = []
         self._children = []
@@ -1128,6 +1234,13 @@ class Client:
                 self._institutions[child["id"]] = child["institutionProfile"][
                     "institutionName"
                 ]
+
+                # Detect institution type
+                institution_type = self._detect_institution_type(
+                    child["institutionProfile"]
+                )
+                self._institution_types[child["id"]] = institution_type
+
                 self._children.append(child)
                 self._childids.append(str(child["id"]))
                 self._childuserids.append(str(child["userId"]))
@@ -1141,6 +1254,9 @@ class Client:
                     )
         _LOGGER.debug("Child ids and names: " + str(self._childnames))
         _LOGGER.debug("Child ids and institution names: " + str(self._institutions))
+        _LOGGER.debug(
+            "Child ids and institution types: " + str(self._institution_types)
+        )
         _LOGGER.debug("Institution codes: " + str(self._institutionProfiles))
 
         self._daily_overview = {}
@@ -1162,6 +1278,11 @@ class Client:
                 )
                 self.presence[str(child["id"])] = 0
         _LOGGER.debug("Child ids and presence data status: " + str(self.presence))
+
+        # Weekly Presence (Komme og Gå):
+        _LOGGER.error("TESTING: About to call _get_weekly_presence()...")
+        self._get_weekly_presence()
+        _LOGGER.error("TESTING: Completed _get_weekly_presence() call")
 
         # Presence Templates (Weekly Schedule):
         self._get_presence_templates()
@@ -1269,52 +1390,64 @@ class Client:
 
         # Bibliotek:
         if self._bibliotek is True:
-            guardian = self._session.get(
-                self.apiurl + "?method=profiles.getProfileContext&portalrole=guardian",
-                verify=True,
-            ).json()["data"]["userId"]
-            childUserIds = ",".join(self._childuserids)
-
             if len(self.widgets) == 0:
                 self.get_widgets()
 
-            # Check for support
+            # Check for widget availability and appropriateness for each child
             if "0019" not in self.widgets:
-                _LOGGER.error(
-                    "You have enabled bibliotek, but we cannot find any matching widgets (0019) in Aula."
-                )
+                _LOGGER.info("Library widget (0019) not found in available widgets")
+            else:
+                # Check if any child has an institution type where library is appropriate
+                applicable_children = []
+                for child_id, institution_type in self._institution_types.items():
+                    if self.is_widget_appropriate_for_institution(
+                        "0019", institution_type
+                    ):
+                        applicable_children.append(child_id)
 
-            token = self.get_token("0019")
+                if not applicable_children:
+                    _LOGGER.info(
+                        "Library widget available but not appropriate for any child's institution type"
+                    )
+                else:
+                    guardian = self._session.get(
+                        self.apiurl
+                        + "?method=profiles.getProfileContext&portalrole=guardian",
+                        verify=True,
+                    ).json()["data"]["userId"]
+                    childUserIds = ",".join(self._childuserids)
 
-            books = self._session.get(
-                CICERO_API
-                + "/portal-api/rest/aula/library/status/v3?"
-                + "institutions="
-                + "&institutions=".join(self._institutionProfiles)
-                + "&children="
-                + "&children=".join(self._childuserids)
-                + "&coverImageHeight=160&widgetVersion=1.6"
-                + "&userProfile=guardian"
-                + "&sessionUUID="
-                + "mitid_user",
-                headers={"Authorization": token, "accept": "application/json"},
-                verify=True,
-            ).json()
+                    token = self.get_token("0019")
 
-            self.loaned_books = {}
-            for loaned_book in books["loans"]:
-                book = {
-                    "Title": loaned_book["title"],
-                    "Author": loaned_book["author"],
-                    "DueDate": loaned_book["dueDate"],
-                    "NumberOfLoans": loaned_book["numberOfLoans"],
-                    "Cover": str(loaned_book["coverImageUrl"]).strip(),
-                }
+                    books = self._session.get(
+                        CICERO_API
+                        + "/portal-api/rest/aula/library/status/v3?"
+                        + "institutions="
+                        + "&institutions=".join(self._institutionProfiles)
+                        + "&children="
+                        + "&children=".join(self._childuserids)
+                        + "&coverImageHeight=160&widgetVersion=1.6"
+                        + "&userProfile=guardian"
+                        + "&sessionUUID="
+                        + "mitid_user",
+                        headers={"Authorization": token, "accept": "application/json"},
+                        verify=True,
+                    ).json()
 
-                if loaned_book["patronDisplayName"] not in self.loaned_books:
-                    self.loaned_books[loaned_book["patronDisplayName"]] = []
+                    self.loaned_books = {}
+                    for loaned_book in books["loans"]:
+                        book = {
+                            "Title": loaned_book["title"],
+                            "Author": loaned_book["author"],
+                            "DueDate": loaned_book["dueDate"],
+                            "NumberOfLoans": loaned_book["numberOfLoans"],
+                            "Cover": str(loaned_book["coverImageUrl"]).strip(),
+                        }
 
-                self.loaned_books[loaned_book["patronDisplayName"]].append(book)
+                        if loaned_book["patronDisplayName"] not in self.loaned_books:
+                            self.loaned_books[loaned_book["patronDisplayName"]] = []
+
+                        self.loaned_books[loaned_book["patronDisplayName"]].append(book)
 
         # End of bibliotek
 
@@ -1324,30 +1457,41 @@ class Client:
                 self.get_widgets()
 
             if "0028" not in self.widgets:
-                _LOGGER.error(
-                    "You have enabled min uddannelse forloeb, but we cannot find any matching widgets (0019) in Aula."
-                )
+                _LOGGER.info("Education widget (0028) not found in available widgets")
+            else:
+                # Check if any child has an institution type where education widget is appropriate
+                applicable_children = []
+                for child_id, institution_type in self._institution_types.items():
+                    if self.is_widget_appropriate_for_institution(
+                        "0028", institution_type
+                    ):
+                        applicable_children.append(child_id)
 
-            token = self.get_token("0028")
-            now = datetime.datetime.now() + datetime.timedelta(weeks=1)
-            thisweek = datetime.datetime.now().strftime("%Y-W%W")
-            nextweek = now.strftime("%Y-W%W")
-            self.forloebthisweek = self._minUddannelse.forloeb(
-                self._session,
-                token,
-                thisweek,
-                self._childuserids,
-                self._institutionProfiles,
-                "mitid_user",
-            )
-            self.forloebnext = self._minUddannelse.forloeb(
-                self._session,
-                token,
-                nextweek,
-                self._childuserids,
-                self._institutionProfiles,
-                "mitid_user",
-            )
+                if not applicable_children:
+                    _LOGGER.info(
+                        "Education widget available but not appropriate for any child's institution type"
+                    )
+                else:
+                    token = self.get_token("0028")
+                    now = datetime.datetime.now() + datetime.timedelta(weeks=1)
+                    thisweek = datetime.datetime.now().strftime("%Y-W%W")
+                    nextweek = now.strftime("%Y-W%W")
+                    self.forloebthisweek = self._minUddannelse.forloeb(
+                        self._session,
+                        token,
+                        thisweek,
+                        self._childuserids,
+                        self._institutionProfiles,
+                        "mitid_user",
+                    )
+                    self.forloebnext = self._minUddannelse.forloeb(
+                        self._session,
+                        token,
+                        nextweek,
+                        self._childuserids,
+                        self._institutionProfiles,
+                        "mitid_user",
+                    )
         # End of Min Uddannelse Forløb
 
         # Min Uddannelse Opgave Liste
@@ -1356,29 +1500,43 @@ class Client:
                 self.get_widgets()
 
             if "0028" not in self.widgets:
-                _LOGGER.error(
-                    "You have enabled min uddannelse forloeb, but we cannot find any matching widgets (0019) in Aula."
-                )
+                _LOGGER.info("Education widget (0028) not found in available widgets")
+            else:
+                # Check if any child has an institution type where education widget is appropriate
+                applicable_children = []
+                for child_id, institution_type in self._institution_types.items():
+                    if self.is_widget_appropriate_for_institution(
+                        "0028", institution_type
+                    ):
+                        applicable_children.append(child_id)
 
-            week = datetime.datetime.now().strftime("%Y-W%W")
-            opgaver = self._minUddannelse.opgaveListe(
-                self._session,
-                token,
-                week,
-                self._childuserids,
-                self._institutionProfiles,
-                "mitid_user",
-            )
+                if not applicable_children:
+                    _LOGGER.info(
+                        "Education widget available but not appropriate for any child's institution type"
+                    )
+                else:
+                    token = self.get_token("0028")
+                    week = datetime.datetime.now().strftime("%Y-W%W")
+                    opgaver = self._minUddannelse.opgaveListe(
+                        self._session,
+                        token,
+                        week,
+                        self._childuserids,
+                        self._institutionProfiles,
+                        "mitid_user",
+                    )
 
-        # Currently only one student supported
-        try:
-            with open("uddannelseopgaveliste.json", "w") as uddannelseopgaveliste_json:
-                json.dump(opgaver, uddannelseopgaveliste_json)
-        except:
-            _LOGGER.warn(
-                "Got the following reply when trying to fetch calendars: "
-                + str(json.dumps(opgaver))
-            )
+                    # Currently only one student supported
+                    try:
+                        with open(
+                            "uddannelseopgaveliste.json", "w"
+                        ) as uddannelseopgaveliste_json:
+                            json.dump(opgaver, uddannelseopgaveliste_json)
+                    except:
+                        _LOGGER.warn(
+                            "Got the following reply when trying to fetch calendars: "
+                            + str(json.dumps(opgaver))
+                        )
         # End of Min Uddannelse Opgave Liste
 
         # Min Uddannelse Uge Note
@@ -1386,38 +1544,49 @@ class Client:
             if len(self.widgets) == 0:
                 self.get_widgets()
             if "0028" not in self.widgets:
-                _LOGGER.error(
-                    "You have enabled min uddannelse forloeb, but we cannot find any matching widgets (0019) in Aula."
-                )
+                _LOGGER.info("Education widget (0028) not found in available widgets")
+            else:
+                # Check if any child has an institution type where education widget is appropriate
+                applicable_children = []
+                for child_id, institution_type in self._institution_types.items():
+                    if self.is_widget_appropriate_for_institution(
+                        "0028", institution_type
+                    ):
+                        applicable_children.append(child_id)
 
-            token = self.get_token("0028")
-            now = datetime.datetime.now() + datetime.timedelta(weeks=1)
-            thisweek = datetime.datetime.now().strftime("%Y-W%W")
-            nextweek = now.strftime("%Y-W%W")
+                if not applicable_children:
+                    _LOGGER.info(
+                        "Education widget available but not appropriate for any child's institution type"
+                    )
+                else:
+                    token = self.get_token("0028")
+                    now = datetime.datetime.now() + datetime.timedelta(weeks=1)
+                    thisweek = datetime.datetime.now().strftime("%Y-W%W")
+                    nextweek = now.strftime("%Y-W%W")
 
-            try:
-                self.ugenotethisweek = self._minUddannelse.ugeBrev(
-                    self._session,
-                    token,
-                    thisweek,
-                    self._childuserids,
-                    self._institutionProfiles,
-                    "mitid_user",
-                )
-            except:
-                self.ugenotethisweek = {}
+                    try:
+                        self.ugenotethisweek = self._minUddannelse.ugeBrev(
+                            self._session,
+                            token,
+                            thisweek,
+                            self._childuserids,
+                            self._institutionProfiles,
+                            "mitid_user",
+                        )
+                    except:
+                        self.ugenotethisweek = {}
 
-            try:
-                self.ugenotenextweek = self._minUddannelse.ugeBrev(
-                    self._session,
-                    token,
-                    nextweek,
-                    self._childuserids,
-                    self._institutionProfiles,
-                    "mitid_user",
-                )
-            except:
-                self.ugenotenextweek = {}
+                    try:
+                        self.ugenotenextweek = self._minUddannelse.ugeBrev(
+                            self._session,
+                            token,
+                            nextweek,
+                            self._childuserids,
+                            self._institutionProfiles,
+                            "mitid_user",
+                        )
+                    except:
+                        self.ugenotenextweek = {}
 
         # End of Min Uddannelse Uge Note
 
@@ -1431,20 +1600,37 @@ class Client:
 
             if len(self.widgets) == 0:
                 self.get_widgets()
-            if (
-                "0029" not in self.widgets
-                and "0004" not in self.widgets
-                and "0062" not in self.widgets
-            ):
-                _LOGGER.error(
-                    "You have enabled ugeplaner, but we cannot find any matching widgets (0029,0004) in Aula."
+
+            # Check for widget availability with kindergarten awareness
+            has_ugeplan_widgets = (
+                "0029" in self.widgets
+                or "0004" in self.widgets
+                or "0062" in self.widgets
+            )
+
+            if not has_ugeplan_widgets:
+                kindergarten_count = sum(
+                    1
+                    for child_id in self._institution_types
+                    if self._institution_types[child_id] == "kindergarten"
                 )
+                if kindergarten_count > 0:
+                    _LOGGER.info(
+                        f"Week plan widgets (0029,0004,0062) not found - detected {kindergarten_count} kindergarten child(ren). Week plans may use different widgets or be unavailable for kindergartens."
+                    )
+                else:
+                    _LOGGER.error(
+                        "You have enabled ugeplaner, but we cannot find any matching widgets (0029,0004,0062) in Aula."
+                    )
+
             if "0029" in self.widgets and "0004" in self.widgets:
                 _LOGGER.warning(
                     "Multiple sources for ugeplaner is untested and might cause problems."
                 )
 
             def ugeplan(week, thisnext):
+                ugeplan_data_found = False
+
                 if "0029" in self.widgets:
                     token = self.get_token("0029")
                     get_payload = (
@@ -1469,6 +1655,7 @@ class Client:
                             self.ugep_attr[person["navn"].split()[0]] = ugeplan
                         elif thisnext == "next":
                             self.ugepnext_attr[person["navn"].split()[0]] = ugeplan
+                        ugeplan_data_found = True
 
                 if "0062" in self.widgets:
                     _LOGGER.debug("In the Huskelisten flow...")
@@ -1512,7 +1699,7 @@ class Client:
                     #
                     if mock_huskelisten == 1:
                         _LOGGER.warning("Using mock data for Huskelisten.")
-                        mock_huskelisten = '[{"userName":"Emilie efternavn","userId":164625,"courseReminders":[],"assignmentReminders":[],"teamReminders":[{"id":76169,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-11-29T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Onsdagslektie: Matematikfessor.dk: Sænk skibet med plus.","createdBy":"Peter ","lastEditBy":"Peter ","subjectName":"Matematik"},{"id":76598,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-06T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Julekalender på Skoledu.dk: I skal forsøge at løse dagens kalenderopgave. opgaven kan også godt løses dagen efter.","createdBy":"Peter ","lastEditBy":"Peter Riis","subjectName":"Matematik"},{"id":76599,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-13T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Julekalender på Skoledu.dk: I skal forsøge at løse dagens kalenderopgave. opgaven kan også godt løses dagen efter.","createdBy":"Peter ","lastEditBy":"Peter ","subjectName":"Matematik"},{"id":76600,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-20T23:00:00Z","teamId":65240,"teamName":"2A","reminderText":"Julekalender på Skoledu.dk: I skal forsøge at løse dagens kalenderopgave. opgaven kan også godt løses dagen efter.","createdBy":"Peter Riis","lastEditBy":"Peter Riis","subjectName":"Matematik"}]},{"userName":"Karla","userId":77882,"courseReminders":[],"assignmentReminders":[{"id":0,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-12-08T11:00:00Z","courseId":297469,"teamNames":["5A","5B"],"teamIds":[65271,65258],"courseSubjects":[],"assignmentId":5027904,"assignmentText":"Skriv en novelle"}],"teamReminders":[{"id":76367,"institutionName":"Holme Skole","institutionId":183,"dueDate":"2022-11-30T23:00:00Z","teamId":65258,"teamName":"5A","reminderText":"Læse resten af kap.1 fra Ternet Ninja ( kopiark) Læs det hele højt eller vælg et afsnit. ","createdBy":"Christina ","lastEditBy":"Christina ","subjectName":"Dansk"}]},{"userName":"Vega  ","userId":206597,"courseReminders":[],"assignmentReminders":[],"teamReminders":[]}]'
+                        mock_huskelisten = '[{"userName":"Test Student 1","userId":100001,"courseReminders":[],"assignmentReminders":[],"teamReminders":[{"id":70001,"institutionName":"Test School","institutionId":100,"dueDate":"2022-11-29T23:00:00Z","teamId":60001,"teamName":"2A","reminderText":"Matematik lektier: Løs opgaver.","createdBy":"Teacher 1","lastEditBy":"Teacher 1","subjectName":"Matematik"},{"id":70002,"institutionName":"Test School","institutionId":100,"dueDate":"2022-12-06T23:00:00Z","teamId":60001,"teamName":"2A","reminderText":"Matematik opgave: Løs dagens opgave.","createdBy":"Teacher 1","lastEditBy":"Teacher 2","subjectName":"Matematik"},{"id":70003,"institutionName":"Test School","institutionId":100,"dueDate":"2022-12-13T23:00:00Z","teamId":60001,"teamName":"2A","reminderText":"Matematik opgave: Løs dagens opgave.","createdBy":"Teacher 1","lastEditBy":"Teacher 1","subjectName":"Matematik"},{"id":70004,"institutionName":"Test School","institutionId":100,"dueDate":"2022-12-20T23:00:00Z","teamId":60001,"teamName":"2A","reminderText":"Matematik opgave: Løs dagens opgave.","createdBy":"Teacher 2","lastEditBy":"Teacher 2","subjectName":"Matematik"}]},{"userName":"Test Student 2","userId":100002,"courseReminders":[],"assignmentReminders":[{"id":0,"institutionName":"Test School","institutionId":100,"dueDate":"2022-12-08T11:00:00Z","courseId":200001,"teamNames":["5A","5B"],"teamIds":[60002,60003],"courseSubjects":[],"assignmentId":500001,"assignmentText":"Skriv en opgave"}],"teamReminders":[{"id":70005,"institutionName":"Test School","institutionId":100,"dueDate":"2022-11-30T23:00:00Z","teamId":60003,"teamName":"5A","reminderText":"Læse opgave fra bog.","createdBy":"Teacher 3","lastEditBy":"Teacher 3","subjectName":"Dansk"}]},{"userName":"Test Student 3","userId":100003,"courseReminders":[],"assignmentReminders":[],"teamReminders":[]}]'
                         data = json.loads(mock_huskelisten, strict=False)
                     else:
                         response = requests.get(
@@ -1776,3 +1963,340 @@ class Client:
         except Exception as e:
             _LOGGER.error(f"Error in _get_closed_days: {e}")
             self.closed_days = {}
+
+    def _get_weekly_presence(self):
+        """Get weekly presence data (komme og gå) dynamically for current and next week"""
+        import datetime
+
+        try:
+            _LOGGER.info(
+                "WEEKLY PRESENCE: Starting to fetch dynamic weekly presence data..."
+            )
+
+            # Initialize weekly presence data
+            self.weekly_presence_current = {}
+            self.weekly_presence_next = {}
+
+            # Get current date
+            today = datetime.date.today()
+
+            # Calculate current week (Monday = 0, Sunday = 6)
+            current_monday = today - datetime.timedelta(days=today.weekday())
+            current_sunday = current_monday + datetime.timedelta(days=6)
+
+            # Calculate next week
+            next_monday = current_monday + datetime.timedelta(days=7)
+            next_sunday = next_monday + datetime.timedelta(days=6)
+
+            _LOGGER.info(
+                f"WEEKLY PRESENCE: Current week: {current_monday} to {current_sunday}"
+            )
+            _LOGGER.info(f"WEEKLY PRESENCE: Next week: {next_monday} to {next_sunday}")
+
+            # Get child profile IDs dynamically from profile context
+            child_profile_ids = self._get_dynamic_child_profile_ids()
+
+            if not child_profile_ids:
+                _LOGGER.warning(
+                    "WEEKLY PRESENCE: No child profile IDs found for presence data"
+                )
+                return
+
+            _LOGGER.info(
+                f"WEEKLY PRESENCE: Using dynamic child profile IDs: {child_profile_ids}"
+            )
+
+            # Fetch current week data
+            _LOGGER.info("WEEKLY PRESENCE: Fetching current week data...")
+            current_week_data = self._get_presence_templates_for_week(
+                current_monday, current_sunday, child_profile_ids
+            )
+            if current_week_data:
+                self.weekly_presence_current = current_week_data
+                _LOGGER.info(
+                    f"WEEKLY PRESENCE: Current week: Added data for {len(current_week_data)} children"
+                )
+                for child_id, days in current_week_data.items():
+                    _LOGGER.info(
+                        f"WEEKLY PRESENCE: Child {child_id} has {len(days)} days"
+                    )
+            else:
+                _LOGGER.warning("WEEKLY PRESENCE: No current week data returned")
+
+            # Fetch next week data
+            _LOGGER.info("WEEKLY PRESENCE: Fetching next week data...")
+            next_week_data = self._get_presence_templates_for_week(
+                next_monday, next_sunday, child_profile_ids
+            )
+            if next_week_data:
+                self.weekly_presence_next = next_week_data
+                _LOGGER.info(
+                    f"WEEKLY PRESENCE: Next week: Added data for {len(next_week_data)} children"
+                )
+                for child_id, days in next_week_data.items():
+                    _LOGGER.info(
+                        f"WEEKLY PRESENCE: Child {child_id} has {len(days)} days"
+                    )
+            else:
+                _LOGGER.warning("WEEKLY PRESENCE: No next week data returned")
+
+            _LOGGER.info(
+                f"WEEKLY PRESENCE: Completed - Current week ({len(self.weekly_presence_current)} children), Next week ({len(self.weekly_presence_next)} children)"
+            )
+
+        except Exception as e:
+            _LOGGER.error(
+                f"WEEKLY PRESENCE: Error in _get_weekly_presence: {e}", exc_info=True
+            )
+            self.weekly_presence_current = {}
+            self.weekly_presence_next = {}
+
+    def _get_dynamic_child_profile_ids(self):
+        """Get child profile IDs dynamically from available data sources"""
+        child_profile_ids = []
+
+        try:
+            _LOGGER.info("CHILD IDS: Starting to get dynamic child profile IDs...")
+
+            # First, try to get from _childnames (most reliable) - these are the 'id' fields
+            if hasattr(self, "_childnames") and self._childnames:
+                child_ids_from_names = list(self._childnames.keys())
+                child_profile_ids.extend(child_ids_from_names)
+                _LOGGER.info(
+                    f"CHILD IDS: Found {len(child_ids_from_names)} child IDs from _childnames: {child_ids_from_names}"
+                )
+                for child_id in child_ids_from_names:
+                    _LOGGER.info(
+                        f"CHILD IDS: Child {child_id} -> {self._childnames[child_id]}"
+                    )
+            else:
+                _LOGGER.warning("CHILD IDS: No _childnames found")
+
+            # ONLY use _childnames - it has the correct 'id' fields we need for API
+            # Remove duplicates and convert to strings
+            child_profile_ids = list(
+                set([str(pid) for pid in child_profile_ids if pid])
+            )
+
+            _LOGGER.info(
+                f"CHILD IDS: Final child profile IDs for API (deduplicated): {child_profile_ids}"
+            )
+
+        except Exception as e:
+            _LOGGER.error(
+                f"CHILD IDS: Error getting dynamic child profile IDs: {e}",
+                exc_info=True,
+            )
+
+        return child_profile_ids
+
+    def _get_presence_templates_for_week(self, start_date, end_date, child_profile_ids):
+        """Fetch presence templates for a week using getPresenceTemplates API"""
+        try:
+            # Format dates as YYYY-MM-DD
+            from_date = start_date.strftime("%Y-%m-%d")
+            to_date = end_date.strftime("%Y-%m-%d")
+
+            # Build URL with child profile IDs - these are the institutionProfile 'id' fields
+            url_params = f"method=presence.getPresenceTemplates&fromDate={from_date}&toDate={to_date}"
+            for profile_id in child_profile_ids:
+                url_params += f"&filterInstitutionProfileIds[]={profile_id}"
+
+            full_url = f"{self.apiurl}?{url_params}"
+
+            response = self._session.get(
+                full_url,
+                verify=True,
+                timeout=15,
+            )
+
+            _LOGGER.info(f"PRESENCE API CALL: {full_url}")
+            _LOGGER.info(f"Response status: {response.status_code}")
+
+            if response.status_code == 200:
+                result = response.json()
+                _LOGGER.info(
+                    f"API response keys: {list(result.keys()) if isinstance(result, dict) else type(result)}"
+                )
+                _LOGGER.info(f"API status: {result.get('status', {})}")
+
+                if result.get("status", {}).get("message") == "OK":
+                    data = result.get("data", {})
+                    _LOGGER.info(
+                        f"Data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
+                    )
+
+                    if "presenceWeekTemplates" in data:
+                        templates = data["presenceWeekTemplates"]
+                        _LOGGER.info(f"Found {len(templates)} presence week templates")
+                        for i, template in enumerate(templates):
+                            institution_profile = template.get("institutionProfile", {})
+                            child_id = institution_profile.get("id")
+                            child_name = institution_profile.get("name", "Unknown")
+                            day_templates = template.get("dayTemplates", [])
+                            _LOGGER.info(
+                                f"Template {i}: Child {child_name} (ID: {child_id}) - {len(day_templates)} days"
+                            )
+                    else:
+                        _LOGGER.warning("No presenceWeekTemplates in API response")
+
+                    return self._parse_presence_templates_data(
+                        data, start_date, end_date
+                    )
+                else:
+                    _LOGGER.warning(
+                        f"API returned non-OK status for presence templates: {result.get('status', {})}"
+                    )
+            else:
+                _LOGGER.warning(
+                    f"API request failed {response.status_code} for presence templates"
+                )
+                _LOGGER.warning(f"Response text: {response.text[:500]}")
+
+        except Exception as e:
+            _LOGGER.error(
+                f"Error fetching presence templates for week {start_date} to {end_date}: {e}"
+            )
+
+        return {}
+
+    def _parse_presence_templates_data(self, data, start_date, end_date):
+        """Parse presence templates data from getPresenceTemplates API response"""
+        parsed_data = {}
+
+        try:
+            _LOGGER.info("PARSING: Start parsing presence templates data")
+
+            # Check if we have presenceWeekTemplates in the data
+            if "presenceWeekTemplates" in data:
+                presence_templates = data["presenceWeekTemplates"]
+                _LOGGER.info(
+                    f"PARSING: Found {len(presence_templates)} presence week templates"
+                )
+
+                # Process each child's template
+                for template in presence_templates:
+                    # Extract child information
+                    institution_profile = template.get("institutionProfile", {})
+                    child_id = str(institution_profile.get("id", ""))
+                    profile_id = str(institution_profile.get("profileId", ""))
+                    child_name = institution_profile.get("name", "")
+                    short_name = institution_profile.get("shortName", "")
+                    institution_name = institution_profile.get("institutionName", "")
+                    institution_code = institution_profile.get("institutionCode", "")
+
+                    _LOGGER.info(
+                        f"PARSING: Processing child {child_name} (ID: {child_id}, Profile: {profile_id})"
+                    )
+
+                    if not child_id:
+                        _LOGGER.warning(f"PARSING: No child_id found for {child_name}")
+                        continue
+
+                    # Initialize child data
+                    parsed_data[child_id] = {}
+                    daily_count = 0
+
+                    # Process day templates
+                    day_templates = template.get("dayTemplates", [])
+                    _LOGGER.info(
+                        f"PARSING: Processing {len(day_templates)} day templates for {child_name}"
+                    )
+
+                    for day_template in day_templates:
+                        by_date = day_template.get("byDate")
+                        if not by_date:
+                            continue
+
+                        # Parse the date
+                        try:
+                            from datetime import datetime
+
+                            date_obj = datetime.strptime(by_date, "%Y-%m-%d").date()
+                            date_str = date_obj.isoformat()
+                            day_name = date_obj.strftime("%A")
+                        except Exception as date_error:
+                            _LOGGER.warning(
+                                f"PARSING: Could not parse date {by_date}: {date_error}"
+                            )
+                            continue
+
+                        # Check if this date is in our target range
+                        if not (start_date <= date_obj <= end_date):
+                            _LOGGER.debug(
+                                f"PARSING: Date {date_str} not in range {start_date} to {end_date}"
+                            )
+                            continue
+
+                        # Extract presence information
+                        is_on_vacation = day_template.get("isOnVacation", False)
+                        vacation_info = day_template.get("vacation", {})
+                        entry_time = day_template.get("entryTime")
+                        exit_time = day_template.get("exitTime")
+                        exit_with = day_template.get("exitWith")
+
+                        presence_info = {
+                            "date": date_str,
+                            "day_name": day_name,
+                            "check_in_time": None,  # Not available in templates
+                            "check_out_time": None,  # Not available in templates
+                            "planned_entry_time": entry_time,
+                            "planned_exit_time": exit_time,
+                            "exit_with": exit_with,
+                            "status": "vacation" if is_on_vacation else "scheduled",
+                            "comment": day_template.get("comment", ""),
+                            "location": "",
+                            "activity_type": day_template.get("activityType"),
+                            "is_default_entry": day_template.get(
+                                "isDefaultEntryTime", False
+                            ),
+                            "is_default_exit": day_template.get(
+                                "isDefaultExitTime", False
+                            ),
+                            "is_on_vacation": is_on_vacation,
+                            "vacation_title": vacation_info.get("title", "")
+                            if vacation_info
+                            else "",
+                            "vacation_description": vacation_info.get(
+                                "description", {}
+                            ).get("html", "")
+                            if vacation_info
+                            else "",
+                            "institution_name": institution_name,
+                            "institution_code": institution_code,
+                            "main_group": institution_profile.get("mainGroup", {}).get(
+                                "name", ""
+                            )
+                            if institution_profile.get("mainGroup")
+                            else "",
+                            "child_name": child_name,
+                            "short_name": short_name,
+                            "profile_id": profile_id,
+                        }
+
+                        parsed_data[child_id][date_str] = presence_info
+                        daily_count += 1
+
+                        _LOGGER.info(
+                            f"PARSING: {child_name} {date_str} ({day_name}): entry={entry_time}, exit={exit_time}, vacation={is_on_vacation}"
+                        )
+
+                _LOGGER.info(
+                    f"PARSING: Successfully parsed presence data for {len(parsed_data)} children"
+                )
+                for child_id, child_data in parsed_data.items():
+                    _LOGGER.info(
+                        f"PARSING: Child {child_id} has {len(child_data)} days of data"
+                    )
+
+            else:
+                _LOGGER.warning(
+                    "PARSING: No presenceWeekTemplates found in API response"
+                )
+
+        except Exception as e:
+            _LOGGER.error(
+                f"PARSING: Error parsing presence templates data: {e}", exc_info=True
+            )
+
+        return parsed_data

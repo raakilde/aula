@@ -15,11 +15,7 @@
       "user": {
         "data": {
           "schoolschedule": "Add school schedules as calendar entities?",
-          "ugeplan": "Add ugeplaner as sensor attributes?",
-          "bibliotek": "Add bibliotek as sensor attributes?",
-          "minuddannelseforloeb": "Add min uddannelse forløb as sensor attributes?",
-          "minuddannelseopgaveliste": "Add min uddannelse skema as sensor attributes?",
-          "minuddannelseugenote": "Add min uddannelse uge note as sensor attributes?"
+          "ugeplan": "Add ugeplaner as sensor attributes?"
         },
         "description": "Select which Aula features you want to enable.",
         "title": "Aula Features"
@@ -75,6 +71,22 @@
       },
       "weekly_schedule_next": {
         "name": "Weekly Schedule Next Week - {child_name}"
+      },
+      "closed_days": {
+        "name": "Closed Days",
+        "state": {
+          "today": "Today",
+          "tomorrow": "Tomorrow",
+          "ongoing": "Ongoing",
+          "none_scheduled": "None scheduled",
+          "unavailable": "Unavailable"
+        }
+      },
+      "weekly_presence": {
+        "name": "Weekly Presence - {child_name}"
+      },
+      "weekly_presence_next": {
+        "name": "Weekly Presence Next Week - {child_name}"
       }
     },
     "calendar": {

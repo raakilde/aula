@@ -19,10 +19,6 @@ SETUP_SCHEMA = vol.Schema(
         ): str,
         vol.Optional("schoolschedule", default=True): bool,
         vol.Optional("ugeplan", default=True): bool,
-        vol.Optional("bibliotek", default=True): bool,
-        vol.Optional("minUddannelseForloeb", default=True): bool,
-        vol.Optional("minUddannelseOpgaveListe", default=True): bool,
-        vol.Optional("minUddannelseUgeNote", default=True): bool,
     }
 )
 

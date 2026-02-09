@@ -22,6 +22,12 @@ async def async_setup_entry(
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = dict(entry.data)
 
+    # Register options update listener
+    unsub_options_update_listener = entry.add_update_listener(options_update_listener)
+    hass.data[DOMAIN][entry.entry_id]["unsub_options_update_listener"] = (
+        unsub_options_update_listener
+    )
+
     # Set up sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
 
@@ -45,8 +51,9 @@ async def async_unload_entry(
             *[hass.config_entries.async_forward_entry_unload(entry, "sensor")]
         )
     )
-    # Remove options_update_listener.
-    hass.data[DOMAIN][entry.entry_id]["unsub_options_update_listener"]()
+    # Remove options_update_listener if it exists.
+    if "unsub_options_update_listener" in hass.data[DOMAIN][entry.entry_id]:
+        hass.data[DOMAIN][entry.entry_id]["unsub_options_update_listener"]()
 
     # Remove config entry from domain.
     if unload_ok:
