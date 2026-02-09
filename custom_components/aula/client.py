@@ -50,6 +50,8 @@ class Client:
     forloebnext = {}
     ugenotethisweek = {}
     ugenotenextweek = {}
+    posts = {}
+    posts_by_child = {}
 
     def __init__(
         self,
@@ -1275,6 +1277,8 @@ class Client:
         self._childids = []
         self._children = []
         self._institutionProfiles = []
+        self._institutionProfileIdsList = []
+
         for profile in self._profiles:
             for child in profile["children"]:
                 self._childnames[child["id"]] = child["name"]
@@ -1291,6 +1295,12 @@ class Client:
                 self._children.append(child)
                 self._childids.append(str(child["id"]))
                 self._childuserids.append(str(child["userId"]))
+
+                # Add child IDs to institution profile IDs list for posts filtering
+                child_id = str(child["id"])
+                if child_id not in self._institutionProfileIdsList:
+                    self._institutionProfileIdsList.append(child_id)
+
             for institutioncode in profile["institutionProfiles"]:
                 if (
                     str(institutioncode["institutionCode"])
@@ -1299,12 +1309,19 @@ class Client:
                     self._institutionProfiles.append(
                         str(institutioncode["institutionCode"])
                     )
+                # Add institution profile IDs for posts filtering
+                institution_profile_id = str(institutioncode["id"])
+                if institution_profile_id not in self._institutionProfileIdsList:
+                    self._institutionProfileIdsList.append(institution_profile_id)
         _LOGGER.debug("Child ids and names: " + str(self._childnames))
         _LOGGER.debug("Child ids and institution names: " + str(self._institutions))
         _LOGGER.debug(
             "Child ids and institution types: " + str(self._institution_types)
         )
         _LOGGER.debug("Institution codes: " + str(self._institutionProfiles))
+        _LOGGER.debug(
+            "Institution profile IDs for posts: " + str(self._institutionProfileIdsList)
+        )
 
         self._daily_overview = {}
         for i, child in enumerate(self._children):
@@ -1865,6 +1882,20 @@ class Client:
             # _LOGGER.debug("End result of ugeplan object: "+str(self.ugep_attr))
         # End of Ugeplaner
 
+        # Posts (Indlæg):
+        _LOGGER.info("POSTS: About to call _get_posts()...")
+        try:
+            self._get_posts()
+            _LOGGER.info("POSTS: _get_posts() completed successfully")
+        except Exception as e:
+            _LOGGER.error(f"POSTS: _get_posts() failed with error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            # Initialize empty posts data on error
+            self.posts = {}
+            self.posts_by_child = {}
+
     def _get_presence_templates(self):
         """Get weekly schedule presence templates (current and next week)"""
         try:
@@ -2345,3 +2376,301 @@ class Client:
             )
 
         return parsed_data
+
+    def _get_posts(self):
+        """Fetch posts/news (indlæg) from Aula with pagination"""
+        try:
+            _LOGGER.info("POSTS: Starting to fetch posts data...")
+
+            # Initialize posts data
+            self.posts = {}
+            self.posts_by_child = {}
+
+            # Build filter parameters for institution profiles
+            filter_params = ""
+            if self._institutionProfileIdsList:
+                filter_params = "&" + "&".join(
+                    [
+                        f"institutionProfileIds[]={profile_id}"
+                        for profile_id in self._institutionProfileIdsList
+                    ]
+                )
+                _LOGGER.info(
+                    f"POSTS: Using institution profile IDs: {self._institutionProfileIdsList}"
+                )
+            else:
+                _LOGGER.warning(
+                    "POSTS: No institution profile IDs available, fetching all posts"
+                )
+
+            all_posts = []
+
+            # Fetch multiple pages to get the last 50 posts
+            for index in [
+                0,
+                10,
+                20,
+                30,
+                40,
+                50,
+                60,
+                70,
+                80,
+                90,
+            ]:  # Fetch 10 pages of 10 posts each = 100 posts
+                try:
+                    posts_url = f"{self.apiurl}?method=posts.getAllPosts&parent=profile&index={index}&limit=10{filter_params}"
+                    _LOGGER.debug(
+                        f"POSTS: Fetching page {index // 10 + 1} from: {posts_url}"
+                    )
+
+                    response = self._session.get(posts_url, verify=True, timeout=15)
+                    _LOGGER.debug(
+                        f"POSTS: Page {index // 10 + 1} response status: {response.status_code}"
+                    )
+
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result.get("status", {}).get("message") == "OK":
+                            posts_data = result.get("data", {}).get("posts", [])
+                            if posts_data:
+                                all_posts.extend(posts_data)
+                                _LOGGER.info(
+                                    f"POSTS: Retrieved {len(posts_data)} posts from page {index // 10 + 1}"
+                                )
+                            else:
+                                _LOGGER.info(
+                                    f"POSTS: No more posts at index {index}, stopping pagination"
+                                )
+                                break
+                        else:
+                            _LOGGER.warning(
+                                f"POSTS: API returned non-OK status at index {index}: {result.get('status', {})}"
+                            )
+                            break
+                    else:
+                        _LOGGER.warning(
+                            f"POSTS: API request failed at index {index} with status {response.status_code}"
+                        )
+                        break
+
+                except Exception as page_error:
+                    _LOGGER.error(
+                        f"POSTS: Error fetching page at index {index}: {page_error}"
+                    )
+                    break
+
+            _LOGGER.info(
+                f"POSTS: Retrieved total of {len(all_posts)} posts across all pages"
+            )
+
+            if all_posts:
+                self._parse_posts_data(all_posts)
+                _LOGGER.info(f"POSTS: Successfully processed {len(self.posts)} posts")
+                _LOGGER.info(
+                    f"POSTS: Posts distribution by child: {[(child_id, len(posts)) for child_id, posts in self.posts_by_child.items()]}"
+                )
+            else:
+                _LOGGER.warning("POSTS: No posts data found across all pages")
+
+        except Exception as e:
+            _LOGGER.error(f"POSTS: Error in _get_posts: {e}", exc_info=True)
+            self.posts = {}
+            self.posts_by_child = {}
+
+    def _parse_posts_data(self, posts_data):
+        """Parse posts data from getAllPosts API response"""
+        try:
+            _LOGGER.info("POSTS: Starting to parse posts data")
+
+            self.posts = {}
+            self.posts_by_child = {}
+
+            for post in posts_data:
+                post_id = str(post.get("id", ""))
+                if not post_id:
+                    continue
+
+                # Extract basic post information
+                parsed_post = {
+                    "id": post_id,
+                    "title": post.get("title", ""),
+                    "content": self._extract_post_content(post.get("content", {})),
+                    "timestamp": post.get("timestamp", ""),
+                    "publish_at": post.get("publishAt", ""),
+                    "expire_at": post.get("expireAt", ""),
+                    "is_important": post.get("isImportant", False),
+                    "important_from": post.get("importantFrom"),
+                    "important_to": post.get("importantTo"),
+                    "owner": self._extract_post_owner(post.get("ownerProfile", {})),
+                    "attachments": self._extract_post_attachments(
+                        post.get("attachments", [])
+                    ),
+                    "shared_with_groups": self._extract_shared_groups(
+                        post.get("sharedWithGroups", [])
+                    ),
+                    "related_profiles": self._extract_related_profiles(
+                        post.get("relatedProfiles", [])
+                    ),
+                    "comment_count": post.get("commentCount", 0),
+                    "allow_comments": post.get("allowComments", False),
+                    "edited_at": post.get("editedAt"),
+                }
+
+                # Store post in main posts dictionary
+                self.posts[post_id] = parsed_post
+
+                # Group posts by related child profiles
+                related_profiles = post.get("relatedProfiles", [])
+                for profile in related_profiles:
+                    child_id = str(profile.get("id", ""))
+                    if child_id:
+                        if child_id not in self.posts_by_child:
+                            self.posts_by_child[child_id] = []
+                        self.posts_by_child[child_id].append(parsed_post)
+
+                _LOGGER.debug(
+                    f"POSTS: Parsed post {post_id}: '{parsed_post['title']}' from {parsed_post['owner'].get('name', 'Unknown')}"
+                )
+
+            _LOGGER.info(
+                f"POSTS: Successfully parsed {len(self.posts)} posts for {len(self.posts_by_child)} children"
+            )
+
+        except Exception as e:
+            _LOGGER.error(f"POSTS: Error parsing posts data: {e}", exc_info=True)
+            self.posts = {}
+            self.posts_by_child = {}
+
+    def _extract_post_content(self, content):
+        """Extract and clean post content"""
+        if isinstance(content, dict):
+            html_content = content.get("html", "")
+            # Strip HTML tags for clean text
+            import re
+
+            clean_content = re.sub(r"<[^>]+>", "", html_content)
+            clean_content = re.sub(r"\s+", " ", clean_content).strip()
+            return {
+                "html": html_content,
+                "text": clean_content,
+            }
+        return {"html": "", "text": ""}
+
+    def _extract_post_owner(self, owner_profile):
+        """Extract post owner information"""
+        if not owner_profile:
+            return {}
+
+        return {
+            "id": str(owner_profile.get("id", "")),
+            "name": owner_profile.get("fullName", ""),
+            "short_name": owner_profile.get("shortName", ""),
+            "role": owner_profile.get("role", ""),
+            "institution": owner_profile.get("institution", {}).get(
+                "institutionName", ""
+            ),
+            "institution_code": owner_profile.get("institution", {}).get(
+                "institutionCode", ""
+            ),
+            "metadata": owner_profile.get("metadata", ""),
+        }
+
+    def _extract_post_attachments(self, attachments):
+        """Extract post attachments (files, media, documents)"""
+        extracted_attachments = []
+
+        for attachment in attachments:
+            attachment_info = {
+                "id": str(attachment.get("id", "")),
+                "name": attachment.get("name", ""),
+                "status": attachment.get("status", ""),
+                "type": "unknown",
+            }
+
+            # Handle file attachments
+            if "file" in attachment and attachment["file"]:
+                file_info = attachment["file"]
+                attachment_info.update(
+                    {
+                        "type": "file",
+                        "url": file_info.get("url", ""),
+                        "created": file_info.get("created", ""),
+                        "bucket": file_info.get("bucket", ""),
+                        "key": file_info.get("key", ""),
+                    }
+                )
+
+            # Handle media attachments (images, videos)
+            elif "media" in attachment and attachment["media"]:
+                media_info = attachment["media"]
+                attachment_info.update(
+                    {
+                        "type": "media",
+                        "media_type": media_info.get("mediaType", ""),
+                        "url": media_info.get("file", {}).get("url", ""),
+                        "thumbnail_url": media_info.get("thumbnailUrl", ""),
+                        "duration": media_info.get("duration"),
+                        "tags": media_info.get("tags", []),
+                    }
+                )
+
+            # Handle document attachments
+            elif "document" in attachment and attachment["document"]:
+                attachment_info.update(
+                    {
+                        "type": "document",
+                        "url": attachment["document"].get("url", ""),
+                    }
+                )
+
+            # Handle link attachments
+            elif "link" in attachment and attachment["link"]:
+                attachment_info.update(
+                    {
+                        "type": "link",
+                        "url": attachment["link"].get("url", ""),
+                    }
+                )
+
+            extracted_attachments.append(attachment_info)
+
+        return extracted_attachments
+
+    def _extract_shared_groups(self, shared_groups):
+        """Extract groups the post is shared with"""
+        groups = []
+        for group in shared_groups:
+            groups.append(
+                {
+                    "id": str(group.get("id", "")),
+                    "name": group.get("name", ""),
+                    "short_name": group.get("shortName", ""),
+                    "institution_code": group.get("institutionCode", ""),
+                    "institution_name": group.get("institutionName", ""),
+                    "is_main_group": group.get("mainGroup", False),
+                    "portal_roles": group.get("portalRoles", []),
+                }
+            )
+        return groups
+
+    def _extract_related_profiles(self, related_profiles):
+        """Extract profiles related to the post (usually children)"""
+        profiles = []
+        for profile in related_profiles:
+            profiles.append(
+                {
+                    "id": str(profile.get("id", "")),
+                    "name": profile.get("fullName", ""),
+                    "short_name": profile.get("shortName", ""),
+                    "role": profile.get("role", ""),
+                    "institution_code": profile.get("institution", {}).get(
+                        "institutionCode", ""
+                    ),
+                    "institution_name": profile.get("institution", {}).get(
+                        "institutionName", ""
+                    ),
+                    "main_group": profile.get("mainGroupName", ""),
+                }
+            )
+        return profiles
