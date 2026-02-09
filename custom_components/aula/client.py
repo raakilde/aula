@@ -1328,17 +1328,7 @@ class Client:
 
         # Debug child mapping after initialization
         _LOGGER.debug(
-            f"MAIL DEBUG: Initialized children with IDs: {[str(child['id']) for child in self._children]}"
-        )
-        _LOGGER.debug(f"MAIL DEBUG: Child names mapping: {self._childnames}")
-        _LOGGER.debug("Child ids and names: " + str(self._childnames))
-        _LOGGER.debug("Child ids and institution names: " + str(self._institutions))
-        _LOGGER.debug(
-            "Child ids and institution types: " + str(self._institution_types)
-        )
-        _LOGGER.debug("Institution codes: " + str(self._institutionProfiles))
-        _LOGGER.debug(
-            "Institution profile IDs for posts: " + str(self._institutionProfileIdsList)
+            f"Initialized {len(self._children)} children for {len(self._institutionProfiles)} institutions"
         )
 
         self._daily_overview = {}
@@ -1920,12 +1910,11 @@ class Client:
         # End of Ugeplaner
 
         # Posts (Indlæg):
-        _LOGGER.info("POSTS: About to call _get_posts()...")
         try:
             self._get_posts()
-            _LOGGER.info("POSTS: _get_posts() completed successfully")
+            _LOGGER.debug("Posts data retrieved successfully")
         except Exception as e:
-            _LOGGER.error(f"POSTS: _get_posts() failed with error: {e}")
+            _LOGGER.error(f"Failed to retrieve posts: {e}")
             import traceback
 
             traceback.print_exc()
@@ -1933,27 +1922,16 @@ class Client:
             self.posts = {}
             self.posts_by_child = {}
 
-        # Debug checkpoint before mail section
-        _LOGGER.info("DEBUG: About to start mail section...")
-
-        # Test mail API first
-        _LOGGER.info("MAIL TEST: Running simple mail API test...")
-        self.test_mail_api_simple()
-
         # Mail Threads:
-        _LOGGER.info("MAIL: About to call _get_mail()...")
         try:
             self._get_mail()
-            _LOGGER.info("MAIL: _get_mail() completed successfully")
-            _LOGGER.info(
-                f"MAIL: Retrieved {len(getattr(self, 'mail_threads', {}))} total mail threads"
-            )
-            _LOGGER.info(
-                f"MAIL: Mail distribution: {[(k, len(v)) for k, v in getattr(self, 'mail_by_child', {}).items()]}"
+            mail_count = len(getattr(self, "mail_threads", {}))
+            child_count = len(getattr(self, "mail_by_child", {}))
+            _LOGGER.debug(
+                f"Retrieved {mail_count} mail threads for {child_count} children"
             )
         except Exception as e:
-            _LOGGER.error(f"MAIL: _get_mail() failed with error: {e}")
-            _LOGGER.error(f"MAIL: Exception type: {type(e).__name__}")
+            _LOGGER.error(f"Failed to retrieve mail: {e}")
             import traceback
 
             traceback.print_exc()
@@ -2110,9 +2088,7 @@ class Client:
         import datetime
 
         try:
-            _LOGGER.info(
-                "WEEKLY PRESENCE: Starting to fetch dynamic weekly presence data..."
-            )
+            _LOGGER.debug("Starting to fetch dynamic weekly presence data...")
 
             # Initialize weekly presence data
             self.weekly_presence_current = {}
@@ -2129,10 +2105,8 @@ class Client:
             next_monday = current_monday + datetime.timedelta(days=7)
             next_sunday = next_monday + datetime.timedelta(days=6)
 
-            _LOGGER.info(
-                f"WEEKLY PRESENCE: Current week: {current_monday} to {current_sunday}"
-            )
-            _LOGGER.info(f"WEEKLY PRESENCE: Next week: {next_monday} to {next_sunday}")
+            _LOGGER.debug(f"Current week: {current_monday} to {current_sunday}")
+            _LOGGER.debug(f"Next week: {next_monday} to {next_sunday}")
 
             # Get child profile IDs dynamically from profile context
             child_profile_ids = self._get_dynamic_child_profile_ids()
@@ -2143,12 +2117,12 @@ class Client:
                 )
                 return
 
-            _LOGGER.info(
-                f"WEEKLY PRESENCE: Using dynamic child profile IDs: {child_profile_ids}"
+            _LOGGER.debug(
+                f"Using {len(child_profile_ids)} child profile IDs for presence data"
             )
 
             # Fetch current week data
-            _LOGGER.info("WEEKLY PRESENCE: Fetching current week data...")
+            _LOGGER.debug("Fetching current week data...")
             current_week_data = self._get_presence_templates_for_week(
                 current_monday, current_sunday, child_profile_ids
             )
@@ -2165,7 +2139,7 @@ class Client:
                 _LOGGER.warning("WEEKLY PRESENCE: No current week data returned")
 
             # Fetch next week data
-            _LOGGER.info("WEEKLY PRESENCE: Fetching next week data...")
+            _LOGGER.debug("Fetching next week data...")
             next_week_data = self._get_presence_templates_for_week(
                 next_monday, next_sunday, child_profile_ids
             )
@@ -2181,8 +2155,8 @@ class Client:
             else:
                 _LOGGER.warning("WEEKLY PRESENCE: No next week data returned")
 
-            _LOGGER.info(
-                f"WEEKLY PRESENCE: Completed - Current week ({len(self.weekly_presence_current)} children), Next week ({len(self.weekly_presence_next)} children)"
+            _LOGGER.debug(
+                f"Weekly presence completed - Current: {len(self.weekly_presence_current)} children, Next: {len(self.weekly_presence_next)} children"
             )
 
         except Exception as e:
@@ -2197,21 +2171,17 @@ class Client:
         child_profile_ids = []
 
         try:
-            _LOGGER.info("CHILD IDS: Starting to get dynamic child profile IDs...")
+            _LOGGER.debug("Getting dynamic child profile IDs...")
 
             # First, try to get from _childnames (most reliable) - these are the 'id' fields
             if hasattr(self, "_childnames") and self._childnames:
                 child_ids_from_names = list(self._childnames.keys())
                 child_profile_ids.extend(child_ids_from_names)
-                _LOGGER.info(
-                    f"CHILD IDS: Found {len(child_ids_from_names)} child IDs from _childnames: {child_ids_from_names}"
+                _LOGGER.debug(
+                    f"Found {len(child_ids_from_names)} child IDs from profile data"
                 )
-                for child_id in child_ids_from_names:
-                    _LOGGER.info(
-                        f"CHILD IDS: Child {child_id} -> {self._childnames[child_id]}"
-                    )
             else:
-                _LOGGER.warning("CHILD IDS: No _childnames found")
+                _LOGGER.debug("No child names found in profile data")
 
             # ONLY use _childnames - it has the correct 'id' fields we need for API
             # Remove duplicates and convert to strings
@@ -2326,8 +2296,8 @@ class Client:
                     institution_name = institution_profile.get("institutionName", "")
                     institution_code = institution_profile.get("institutionCode", "")
 
-                    _LOGGER.info(
-                        f"PARSING: Processing child {child_name} (ID: {child_id}, Profile: {profile_id})"
+                    _LOGGER.debug(
+                        f"PARSING: Processing child {child_name} (ID: {child_id})"
                     )
 
                     if not child_id:
@@ -2340,7 +2310,7 @@ class Client:
 
                     # Process day templates
                     day_templates = template.get("dayTemplates", [])
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"PARSING: Processing {len(day_templates)} day templates for {child_name}"
                     )
 
@@ -2418,17 +2388,12 @@ class Client:
                         parsed_data[child_id][date_str] = presence_info
                         daily_count += 1
 
-                        _LOGGER.info(
-                            f"PARSING: {child_name} {date_str} ({day_name}): entry={entry_time}, exit={exit_time}, vacation={is_on_vacation}"
-                        )
+                        # Remove individual day logging - too verbose
+                        # Each child has 5+ days logged individually
 
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"PARSING: Successfully parsed presence data for {len(parsed_data)} children"
                 )
-                for child_id, child_data in parsed_data.items():
-                    _LOGGER.info(
-                        f"PARSING: Child {child_id} has {len(child_data)} days of data"
-                    )
 
             else:
                 _LOGGER.warning(
@@ -2445,7 +2410,7 @@ class Client:
     def _get_posts(self):
         """Fetch posts/news (indlæg) from Aula with pagination"""
         try:
-            _LOGGER.info("POSTS: Starting to fetch posts data...")
+            _LOGGER.debug("Starting to fetch posts data...")
 
             # Initialize posts data
             self.posts = {}
@@ -2464,12 +2429,12 @@ class Client:
                         for profile_id in self._institutionProfileIdsList
                     ]
                 )
-                _LOGGER.info(
-                    f"POSTS: Using institution profile IDs: {self._institutionProfileIdsList}"
+                _LOGGER.debug(
+                    f"Using {len(self._institutionProfileIdsList)} institution profile IDs for posts"
                 )
             else:
-                _LOGGER.warning(
-                    "POSTS: No institution profile IDs available, fetching all posts"
+                _LOGGER.debug(
+                    "No institution profile IDs available, fetching all posts"
                 )
 
             all_posts = []
@@ -2593,9 +2558,7 @@ class Client:
                             self.posts_by_child[child_id] = []
                         self.posts_by_child[child_id].append(parsed_post)
 
-                _LOGGER.debug(
-                    f"POSTS: Parsed post {post_id}: '{parsed_post['title']}' from {parsed_post['owner'].get('name', 'Unknown')}"
-                )
+                # Individual post parsing - reduced logging verbosity
 
             _LOGGER.info(
                 f"POSTS: Successfully parsed {len(self.posts)} posts for {len(self.posts_by_child)} children"
@@ -2742,43 +2705,27 @@ class Client:
     def test_mail_api_simple(self):
         """Simple test of mail API for debugging"""
         try:
-            _LOGGER.info("MAIL TEST: Testing basic mail API call...")
+            _LOGGER.debug("Testing mail API connectivity...")
             if not hasattr(self, "_session") or not self._session:
-                _LOGGER.error("MAIL TEST: No session available")
+                _LOGGER.debug("No session available for mail test")
                 return False
 
             url = f"{self.apiurl}?method=messaging.getThreads&sortOn=date&orderDirection=desc&page=0"
-            _LOGGER.info(f"MAIL TEST: Calling URL: {url}")
-
             response = self._session.get(url, verify=True, timeout=10)
-            _LOGGER.info(f"MAIL TEST: Response status: {response.status_code}")
 
             if response.status_code == 200:
                 data = response.json()
-                _LOGGER.info(
-                    f"MAIL TEST: Response status message: {data.get('status', {}).get('message', 'UNKNOWN')}"
-                )
                 threads = data.get("data", {}).get("threads", [])
-                _LOGGER.info(f"MAIL TEST: Found {len(threads)} threads")
-
-                for i, thread in enumerate(threads[:3]):  # Log first 3 threads
-                    regarding_children = thread.get("regardingChildren", [])
-                    profile_ids = [
-                        str(child.get("profileId", "")) for child in regarding_children
-                    ]
-                    _LOGGER.info(
-                        f"MAIL TEST: Thread {i + 1}: '{thread.get('subject', 'NO_SUBJECT')}' - Profile IDs: {profile_ids}"
-                    )
-
+                _LOGGER.debug(f"Mail API test successful: {len(threads)} threads found")
                 return True
             else:
-                _LOGGER.error(
-                    f"MAIL TEST: API call failed with status {response.status_code}"
+                _LOGGER.warning(
+                    f"Mail API test failed with status {response.status_code}"
                 )
                 return False
 
         except Exception as e:
-            _LOGGER.error(f"MAIL TEST: Exception occurred: {e}")
+            _LOGGER.error(f"Mail API test failed: {e}")
             import traceback
 
             traceback.print_exc()
@@ -2933,9 +2880,7 @@ class Client:
                                 self.mail_by_child[sensor_child_id] = []
                             self.mail_by_child[sensor_child_id].append(parsed_thread)
 
-                _LOGGER.debug(
-                    f"MAIL: Parsed thread {thread_id}: '{parsed_thread['subject']}' regarding children: {regarding_child_ids}"
-                )
+                # Individual mail thread parsing - reduced logging verbosity
 
             _LOGGER.info(
                 f"MAIL: Successfully parsed {len(self.mail_threads)} mail threads for {len(self.mail_by_child)} children"
