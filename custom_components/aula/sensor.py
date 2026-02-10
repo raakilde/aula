@@ -9,11 +9,11 @@ from homeassistant import config_entries, core
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .client import Client
-from .const import DOMAIN
 from .const import (
     CONF_AUTH_COOKIES,
     CONF_SCHOOLSCHEDULE,
     CONF_UGEPLAN,
+    DOMAIN,
 )
 from .sensors import (
     AulaAttendanceSensor,
@@ -47,20 +47,10 @@ async def async_setup_entry(
     if config_entry.options:
         config.update(config_entry.options)
 
-    # Set up global feature flags
-    global \
-        ugeplan, \
-        bibliotek, \
-        minuddannelseforloeb, \
-        minuddannelseopgaveliste, \
-        minuddannelseugenote
+    # Set up global feature flag
+    global ugeplan
 
     ugeplan = config.get(CONF_UGEPLAN, True)
-    # Widget-based features are always enabled and controlled by widget availability
-    bibliotek = True
-    minuddannelseforloeb = True
-    minuddannelseopgaveliste = True
-    minuddannelseugenote = True
 
     # Create callback for persisting updated cookies
     def persist_cookies_callback(updated_cookies):
@@ -128,13 +118,13 @@ async def async_setup_entry(
 
         # Library sensor - independent of daily presence (books exist regardless)
         # Create for school-type children; skip for kindergartens
-        if bibliotek and institution_type != "kindergarten":
+        if institution_type != "kindergarten":
             _LOGGER.debug(
                 f"Creating library sensor for {child_name} (institution: {institution_type}, "
                 f"widget 0019 in available_widgets: {'0019' in available_widgets})"
             )
             entities.append(AulaLibrarySensor(hass, coordinator, child))
-        elif bibliotek and institution_type == "kindergarten":
+        else:
             _LOGGER.debug(f"Library sensor for {child_name} skipped - kindergarten")
 
         if client.presence[child_id] == 1:
@@ -148,14 +138,13 @@ async def async_setup_entry(
 
                 # Education course sensors - check widget availability and institution appropriateness
                 if (
-                    minuddannelseforloeb
-                    and "0028" in available_widgets
+                    "0028" in available_widgets
                     and client.is_widget_appropriate_for_institution(
                         "0028", institution_type
                     )
                 ):
                     entities.append(AulaEducationSensor(hass, coordinator, child))
-                elif minuddannelseforloeb and (
+                elif (
                     "0028" not in available_widgets
                     or not client.is_widget_appropriate_for_institution(
                         "0028", institution_type
@@ -172,14 +161,13 @@ async def async_setup_entry(
 
                 # Week notes sensors - check widget availability and institution appropriateness
                 if (
-                    minuddannelseugenote
-                    and "0028" in available_widgets
+                    "0028" in available_widgets
                     and client.is_widget_appropriate_for_institution(
                         "0028", institution_type
                     )
                 ):
                     entities.append(AulaWeekNotesSensor(hass, coordinator, child))
-                elif minuddannelseugenote and (
+                elif (
                     "0028" not in available_widgets
                     or not client.is_widget_appropriate_for_institution(
                         "0028", institution_type

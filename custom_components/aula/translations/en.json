@@ -6,10 +6,7 @@
       "cookies_required": "Please provide session cookies from your browser",
       "invalid_cookies": "The provided cookies are invalid or expired",
       "invalid_json": "Invalid JSON format. Please provide cookies as JSON",
-      "validation_failed": "Authentication validation failed. Please try again",
-      "token_required": "Please provide a JWT token",
-      "invalid_token": "The provided JWT token is invalid or expired",
-      "token_validation_failed": "JWT token validation failed. Please try again"
+      "validation_failed": "Authentication validation failed. Please try again"
     },
     "step": {
       "user": {
@@ -20,14 +17,6 @@
         },
         "description": "Provide session cookies from your browser after logging into aula.dk with MitID. API tokens are fetched automatically - you only need cookies. Other features (library, education modules) are auto-detected from your account.",
         "title": "Aula Setup"
-      }
-    }
-  },
-  "selector": {
-    "auth_method": {
-      "options": {
-        "cookies": "Session Cookies",
-        "jwt_token": "JWT Token"
       }
     }
   },

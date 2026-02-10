@@ -15,7 +15,6 @@ import json
 import logging
 import re
 import time
-import traceback
 
 import requests
 from homeassistant.exceptions import ConfigEntryNotReady
@@ -365,13 +364,6 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             )
 
             try:
-                guardian = self._session.get(
-                    self.apiurl
-                    + "?method=profiles.getProfileContext&portalrole=guardian",
-                    verify=True,
-                ).json()["data"]["userId"]
-                childUserIds = ",".join(self._childuserids)
-
                 token = self.get_token("0019")
 
                 books = self._session.get(
@@ -782,8 +774,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             self._get_posts()
             _LOGGER.debug("Posts data retrieved successfully")
         except Exception as e:
-            _LOGGER.error(f"Failed to retrieve posts: {e}")
-            traceback.print_exc()
+            _LOGGER.error(f"Failed to retrieve posts: {e}", exc_info=True)
             # Initialize empty posts data on error
             self.posts = {}
             self.posts_by_child = {}
@@ -797,8 +788,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 f"Retrieved {mail_count} mail threads for {child_count} children"
             )
         except Exception as e:
-            _LOGGER.error(f"Failed to retrieve mail: {e}")
-            traceback.print_exc()
+            _LOGGER.error(f"Failed to retrieve mail: {e}", exc_info=True)
             # Initialize empty mail data on error
             self.mail_threads = {}
             self.mail_by_child = {}

@@ -220,8 +220,7 @@ class WidgetsMixin:
                 )
                 raise Exception("Token response missing data")
 
-            self._bearertoken = response_data["data"]
-            token = "Bearer " + str(self._bearertoken)
+            token = "Bearer " + str(response_data["data"])
             self.tokens[widgetid] = token
 
             _LOGGER.debug(f"Successfully obtained token for widget {widgetid}")

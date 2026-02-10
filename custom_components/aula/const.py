@@ -1,17 +1,3 @@
-STARTUP = r"""
-                _
-     /\        | |
-    /  \  _   _| | __ _
-   / /\ \| | | | |/ _` |
-  / ____ \ |_| | | (_| |
- /_/    \_\__,_|_|\__,_|
-Aula integration, version: %s
-This is a custom integration
-If you have any issues with this you need to open an issue here:
-https://github.com/raakilde/aula/issues
--------------------------------------------------------------------
-"""
-
 DOMAIN = "aula"
 API = "https://www.aula.dk/api/v"
 API_VERSION = "22"
@@ -22,5 +8,4 @@ CICERO_API = "https://surf.cicero-suite.com"
 CONF_SCHOOLSCHEDULE = "schoolschedule"
 CONF_UGEPLAN = "ugeplan"
 # Widget-based features are now auto-detected from API
-CONF_URL = "url"
 CONF_AUTH_COOKIES = "auth_cookies"

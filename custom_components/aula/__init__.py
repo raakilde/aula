@@ -6,9 +6,8 @@ import asyncio
 import logging
 
 from homeassistant import config_entries, core
-from homeassistant.loader import async_get_integration
 
-from .const import DOMAIN, STARTUP
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -17,80 +17,6 @@ _LOGGER = logging.getLogger(__name__)
 class SessionMixin:
     """Mixin providing session/cookie management methods for the Aula Client."""
 
-    def test_jwt_token(self, jwt_token):
-        """Test if a JWT token is valid by making an API call"""
-        try:
-            import requests
-
-            headers = {
-                "Authorization": f"Bearer {jwt_token}",
-                "Accept": "application/json",
-                "User-Agent": "Mozilla/5.0 (compatible; HomeAssistant-Aula)",
-            }
-
-            # Test the JWT token with a simple API call
-            response = requests.get(
-                "https://www.aula.dk/api/v19/me", headers=headers, timeout=10
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                return "id" in data or "userId" in data
-            elif response.status_code == 401:
-                _LOGGER.debug(
-                    "JWT token authentication failed - token expired or invalid"
-                )
-                return False
-            else:
-                _LOGGER.debug(f"JWT token test returned status {response.status_code}")
-                return False
-
-        except Exception as e:
-            _LOGGER.error(f"JWT token test failed: {e}")
-            return False
-
-    def test_authentication(self):
-        """Test if authentication cookies are valid without browser automation"""
-        try:
-            if not self._auth_cookies:
-                _LOGGER.debug("No authentication cookies provided")
-                return False
-
-            # Check if this is a JWT token stored as a special cookie
-            if isinstance(self._auth_cookies, list) and len(self._auth_cookies) == 1:
-                cookie = self._auth_cookies[0]
-                if cookie.get("name") == "_jwt_token":
-                    jwt_token = cookie.get("value")
-                    if jwt_token:
-                        return self.test_jwt_token(jwt_token)
-
-            # Handle different cookie formats for regular session cookies
-            if isinstance(self._auth_cookies, dict):
-                # Simple JSON format: {"PHPSESSID": "value", "aula_token": "value"}
-                # Convert to array format expected by init_session_with_cookies
-                converted_cookies = []
-                for name, value in self._auth_cookies.items():
-                    converted_cookies.append(
-                        {
-                            "name": name,
-                            "value": value,
-                            "domain": ".aula.dk",
-                            "path": "/",
-                            "secure": True,
-                        }
-                    )
-                self._auth_cookies = converted_cookies
-
-            if self.init_session_with_cookies():
-                return self.test_session()
-            else:
-                _LOGGER.debug("Failed to initialize session with cookies")
-                return False
-
-        except Exception as e:
-            _LOGGER.error(f"Authentication test failed: {e}")
-            return False
-
     def init_session_with_cookies(self):
         """Initialize session with stored cookies"""
         if not self._auth_cookies:
@@ -423,69 +349,6 @@ class SessionMixin:
         except Exception as e:
             _LOGGER.error(f"Error in auto-increment profile_change: {e}")
 
-    def get_session_cookies(self):
-        """Get current session cookies for storage"""
-        cookies = []
-        for cookie in self._session.cookies:
-            cookies.append(
-                {
-                    "name": cookie.name,
-                    "value": cookie.value,
-                    "domain": cookie.domain,
-                    "path": cookie.path,
-                    "secure": cookie.secure,
-                }
-            )
-        return cookies
-
-    def import_cookies_from_file(self, cookie_file_path):
-        """Import authentication cookies from a file (for headless setups)"""
-        try:
-            import json
-
-            with open(cookie_file_path, "r") as f:
-                cookies = json.load(f)
-
-            self._auth_cookies = cookies
-            _LOGGER.info(f"Imported {len(cookies)} cookies from {cookie_file_path}")
-
-            # Initialize session token timing based on cookie import
-            self._session_token_time = time.time()
-            self._last_profile_change_increment = self._session_token_time
-
-            # Test the imported session
-            if self.init_session_with_cookies() and self.test_session():
-                _LOGGER.info("Imported cookies are valid and working")
-                return True
-            else:
-                _LOGGER.error("Imported cookies are invalid or expired")
-                return False
-
-        except Exception as e:
-            _LOGGER.error(f"Failed to import cookies from {cookie_file_path}: {e}")
-            return False
-
-    def export_cookies_to_file(self, cookie_file_path):
-        """Export current authentication cookies to a file"""
-        try:
-            import json
-
-            if not self._auth_cookies:
-                _LOGGER.error("No authentication cookies to export")
-                return False
-
-            with open(cookie_file_path, "w") as f:
-                json.dump(self._auth_cookies, f, indent=2)
-
-            _LOGGER.info(
-                f"Exported {len(self._auth_cookies)} cookies to {cookie_file_path}"
-            )
-            return True
-
-        except Exception as e:
-            _LOGGER.error(f"Failed to export cookies to {cookie_file_path}: {e}")
-            return False
-
     def login(self, show_browser=True):
         """Login via cookie-based authentication"""
         _LOGGER.info("Starting authentication...")
@@ -571,9 +434,6 @@ class SessionMixin:
                     "data" in profile_context
                     and "institutionProfile" in profile_context["data"]
                 ):
-                    self._profilecontext = profile_context["data"][
-                        "institutionProfile"
-                    ]["relations"]
                     _LOGGER.info("Successfully retrieved profile context")
                 else:
                     _LOGGER.warning("Profile context response missing expected data")

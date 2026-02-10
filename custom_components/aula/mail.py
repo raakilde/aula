@@ -12,35 +12,6 @@ _LOGGER = logging.getLogger(__name__)
 class MailMixin:
     """Mixin providing mail-related methods for the Aula Client."""
 
-    def test_mail_api_simple(self):
-        """Simple test of mail API for debugging"""
-        try:
-            _LOGGER.debug("Testing mail API connectivity...")
-            if not hasattr(self, "_session") or not self._session:
-                _LOGGER.debug("No session available for mail test")
-                return False
-
-            url = f"{self.apiurl}?method=messaging.getThreads&sortOn=date&orderDirection=desc&page=0"
-            response = self._session.get(url, verify=True, timeout=10)
-
-            if response.status_code == 200:
-                data = response.json()
-                threads = data.get("data", {}).get("threads", [])
-                _LOGGER.debug(f"Mail API test successful: {len(threads)} threads found")
-                return True
-            else:
-                _LOGGER.warning(
-                    f"Mail API test failed with status {response.status_code}"
-                )
-                return False
-
-        except Exception as e:
-            _LOGGER.error(f"Mail API test failed: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return False
-
     def _get_mail(self):
         """Fetch mail threads from Aula messaging system"""
         try:

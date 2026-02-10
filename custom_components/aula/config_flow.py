@@ -39,15 +39,12 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self):
         """Initialize config flow."""
-        print("AULA CONFIG FLOW __INIT__ CALLED")
-        _LOGGER.critical("AULA CONFIG FLOW __INIT__ CALLED")
         super().__init__()
 
     async def async_step_user(self, user_input=None):
         """Handle initial setup - collect session cookies from user."""
 
-        print("AULA CONFIG FLOW async_step_user CALLED")
-        _LOGGER.critical("AULA CONFIG FLOW async_step_user CALLED")
+        _LOGGER.debug("Aula config flow: async_step_user called")
 
         if user_input is not None:
             try:

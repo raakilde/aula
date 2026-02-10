@@ -5,10 +5,7 @@
       "2": "Unknown error",
       "invalid_json": "Invalid cookie format. Use browser string format or valid JSON.",
       "missing_cookies": "Missing required cookies. Ensure PHPSESSID and Csrfp-Token are included.",
-      "auth_failed": "MitID authentication failed. Please try again.",
-      "browser_required": "Browser automation not available. Install Chrome/Chromium and ChromeDriver for your system architecture.",
-      "chromedriver_failed": "ChromeDriver installation failed. On ARM64: sudo apt install chromium-driver",
-      "no_display": "No display available for browser. Enable X11 forwarding or use headless mode."
+      "auth_failed": "Authentication failed. Please check your cookies and try again."
     },
     "step": {
       "user": {
@@ -35,13 +32,6 @@
       "1": "Unknown error"
     },
     "step": {
-      "user": {
-        "data": {
-          "url": "School URL"
-        },
-        "description": "School URL is already configured. MitID authentication will be used.",
-        "title": "Authentication"
-      },
       "options": {
         "data": {
           "schoolschedule": "Add school schedules as calendar entities?",

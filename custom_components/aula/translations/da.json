@@ -7,10 +7,7 @@
       "cookies_required": "Angiv venligst session cookies fra din browser",
       "invalid_cookies": "De angivne cookies er ugyldige eller udløbet",
       "invalid_json": "Ugyldigt JSON format. Angiv cookies som JSON",
-      "validation_failed": "Godkendelse mislykkedes. Prøv igen",
-      "token_required": "Angiv venligst et JWT token",
-      "invalid_token": "Det angivne JWT token er ugyldigt eller udløbet",
-      "token_validation_failed": "JWT token validering mislykkedes. Prøv igen"
+      "validation_failed": "Godkendelse mislykkedes. Prøv igen"
     },
     "step": {
       "user": {
@@ -21,14 +18,6 @@
         },
         "description": "Angiv session cookies fra din browser efter login på aula.dk med MitID. API tokens hentes automatisk - du behøver kun cookies. Andre funktioner (bibliotek, undervisningsmoduler) opdages automatisk fra din konto.",
         "title": "Aula Opsætning"
-      }
-    }
-  },
-  "selector": {
-    "auth_method": {
-      "options": {
-        "cookies": "Session Cookies",
-        "jwt_token": "JWT Token"
       }
     }
   },

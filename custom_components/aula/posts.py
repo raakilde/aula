@@ -21,10 +21,6 @@ class PostsMixin:
             self.posts = {}
             self.posts_by_child = {}
 
-            # Initialize mail data
-            self.mail_threads = {}
-            self.mail_by_child = {}
-
             # Build filter parameters for institution profiles
             filter_params = ""
             if self._institutionProfileIdsList:

@@ -1,15 +1,11 @@
-# from homeassistant.util import Throttle
 import logging
-from datetime import timedelta
 
 from homeassistant import config_entries, core
 from homeassistant.components.binary_sensor import BinarySensorEntity
-from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-SCAN_INTERVAL = timedelta(minutes=30)
 
 
 async def async_setup_entry(
@@ -49,7 +45,7 @@ async def async_setup_entry(
     async_add_entities(sensors, True)
 
 
-class AulaBinarySensor(BinarySensorEntity, RestoreEntity):
+class AulaBinarySensor(BinarySensorEntity):
     def __init__(self, hass, unread, subject, text, sender):
         self._hass = hass
         self._unread = unread
@@ -75,10 +71,6 @@ class AulaBinarySensor(BinarySensorEntity, RestoreEntity):
     @property
     def icon(self):
         return "mdi:email"
-
-    @property
-    def friendly_name(self):
-        return "Aula message"
 
     @property
     def is_on(self):
