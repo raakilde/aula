@@ -101,12 +101,31 @@ async def async_setup_entry(
         f"Available widgets for institution: {list(available_widgets.keys())}"
     )
 
+    if not getattr(client, "_children", []):
+        _LOGGER.warning(
+            "No children data available - authentication may have failed. "
+            "Entities will be created on next successful refresh."
+        )
+        async_add_entities([], update_before_add=True)
+        return
+
     for i, child in enumerate(client._children):
         child_id = str(child["id"])
         child_name = client._childnames[child["id"]].split()[0]
         institution_type = getattr(client, "_institution_types", {}).get(
             child["id"], "unknown"
         )
+
+        # Library sensor - independent of daily presence (books exist regardless)
+        # Create for school-type children; skip for kindergartens
+        if bibliotek and institution_type != "kindergarten":
+            _LOGGER.debug(
+                f"Creating library sensor for {child_name} (institution: {institution_type}, "
+                f"widget 0019 in available_widgets: {'0019' in available_widgets})"
+            )
+            entities.append(AulaLibrarySensor(hass, coordinator, child))
+        elif bibliotek and institution_type == "kindergarten":
+            _LOGGER.debug(f"Library sensor for {child_name} skipped - kindergarten")
 
         if client.presence[child_id] == 1:
             if child_id in client._daily_overview:
@@ -116,28 +135,6 @@ async def async_setup_entry(
 
                 # Main attendance/presence sensor - always available
                 entities.append(AulaAttendanceSensor(hass, coordinator, child))
-
-                # Library sensor - check widget availability and institution appropriateness
-                if (
-                    bibliotek
-                    and "0019" in available_widgets
-                    and client.is_widget_appropriate_for_institution(
-                        "0019", institution_type
-                    )
-                ):
-                    entities.append(AulaLibrarySensor(hass, coordinator, child))
-                elif bibliotek and (
-                    "0019" not in available_widgets
-                    or not client.is_widget_appropriate_for_institution(
-                        "0019", institution_type
-                    )
-                ):
-                    reason = (
-                        "widget not available"
-                        if "0019" not in available_widgets
-                        else f"not appropriate for {institution_type}"
-                    )
-                    _LOGGER.info(f"Library sensor for {child_name} skipped - {reason}")
 
                 # Education course sensors - check widget availability and institution appropriateness
                 if (
@@ -388,6 +385,57 @@ class AulaLibrarySensor(Entity):
         self._child = child
         self._client = hass.data[DOMAIN]["client"]
 
+    def _find_books_for_child(self):
+        """Find loaned books for this child, handling name mismatches between Aula and CICERO.
+
+        The CICERO API keys books by patronDisplayName which may differ from the
+        Aula child name (e.g. 'Aksel' vs 'Aksel Surname'). This method tries:
+        1. Exact match on child["name"]
+        2. Match on the childnames lookup (full name from profile)
+        3. Partial match: patronDisplayName contains or is contained in child name
+        """
+        loaned = self._client.loaned_books
+        if not loaned:
+            return None
+
+        child_name = self._child.get("name", "")
+        # Also get the name from _childnames which may be formatted differently
+        profile_name = self._client._childnames.get(self._child["id"], "")
+
+        # 1. Exact match on child["name"]
+        if child_name in loaned:
+            return loaned[child_name]
+
+        # 2. Exact match on profile name
+        if profile_name and profile_name in loaned:
+            return loaned[profile_name]
+
+        # 3. Partial/first-name matching
+        child_first = child_name.split()[0].lower() if child_name else ""
+        profile_first = profile_name.split()[0].lower() if profile_name else ""
+
+        for patron_name, books in loaned.items():
+            patron_lower = patron_name.lower()
+            patron_first = patron_lower.split()[0] if patron_lower else ""
+
+            # First name match
+            if child_first and (
+                patron_first == child_first or patron_lower == child_first
+            ):
+                return books
+            if profile_first and (
+                patron_first == profile_first or patron_lower == profile_first
+            ):
+                return books
+
+            # Substring match (patron in child name or vice versa)
+            if child_name and (
+                patron_lower in child_name.lower() or child_name.lower() in patron_lower
+            ):
+                return books
+
+        return None
+
     @property
     def name(self):
         childname = self._client._childnames[self._child["id"]].split()[0]
@@ -395,21 +443,19 @@ class AulaLibrarySensor(Entity):
 
     @property
     def state(self):
-        try:
-            books = self._client.loaned_books[self._child["name"]]
-            if isinstance(books, list):
-                return len(books)
-            return 0
-        except:
-            return "unavailable"
+        books = self._find_books_for_child()
+        if books is not None and isinstance(books, list):
+            return len(books)
+        return 0
 
     @property
     def extra_state_attributes(self):
         attributes = {}
-        try:
-            attributes["books"] = self._client.loaned_books[self._child["name"]]
-        except:
-            attributes["books"] = "Not available"
+        books = self._find_books_for_child()
+        if books is not None:
+            attributes["books"] = books
+        else:
+            attributes["books"] = []
         return attributes
 
     @property
