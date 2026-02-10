@@ -366,7 +366,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             try:
                 token = self.get_token("0019")
 
-                books = self._session.get(
+                response = self._session.get(
                     CICERO_API
                     + "/portal-api/rest/aula/library/status/v3?"
                     + "institutions="
@@ -379,27 +379,35 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     + "mitid_user",
                     headers={"Authorization": token, "accept": "application/json"},
                     verify=True,
-                ).json()
-
-                self.loaned_books = {}
-                for loaned_book in books["loans"]:
-                    book = {
-                        "Title": loaned_book["title"],
-                        "Author": loaned_book["author"],
-                        "DueDate": loaned_book["dueDate"],
-                        "NumberOfLoans": loaned_book["numberOfLoans"],
-                        "Cover": str(loaned_book["coverImageUrl"]).strip(),
-                    }
-
-                    if loaned_book["patronDisplayName"] not in self.loaned_books:
-                        self.loaned_books[loaned_book["patronDisplayName"]] = []
-
-                    self.loaned_books[loaned_book["patronDisplayName"]].append(book)
-
-                _LOGGER.debug(
-                    f"Library books loaded. Keys (patronDisplayNames): {list(self.loaned_books.keys())}, "
-                    f"Child names: {list(self._childnames.values())}"
                 )
+
+                if response.status_code != 200:
+                    _LOGGER.warning(
+                        f"Library API returned status {response.status_code}"
+                    )
+                    self.loaned_books = {}
+                else:
+                    books = response.json()
+
+                    self.loaned_books = {}
+                    for loaned_book in books["loans"]:
+                        book = {
+                            "Title": loaned_book["title"],
+                            "Author": loaned_book["author"],
+                            "DueDate": loaned_book["dueDate"],
+                            "NumberOfLoans": loaned_book["numberOfLoans"],
+                            "Cover": str(loaned_book["coverImageUrl"]).strip(),
+                        }
+
+                        if loaned_book["patronDisplayName"] not in self.loaned_books:
+                            self.loaned_books[loaned_book["patronDisplayName"]] = []
+
+                        self.loaned_books[loaned_book["patronDisplayName"]].append(book)
+
+                    _LOGGER.debug(
+                        f"Library books loaded. Keys (patronDisplayNames): {list(self.loaned_books.keys())}, "
+                        f"Child names: {list(self._childnames.values())}"
+                    )
             except Exception as e:
                 _LOGGER.warning(f"Failed to fetch library data: {e}")
                 self.loaned_books = {}
