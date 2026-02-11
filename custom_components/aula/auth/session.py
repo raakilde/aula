@@ -161,77 +161,40 @@ class SessionMixin:
             return False
 
     def _try_profile_change_sync(self):
-        """Try to auto-detect and sync the current profile_change counter"""
+        """Try to sync the current profile_change counter from the server."""
         try:
-            _LOGGER.debug("Attempting to auto-sync profile_change counter")
-            # Add delay to prevent rapid polling
-            time.sleep(2)
+            _LOGGER.debug("Attempting to sync profile_change from server")
 
-            # Try to access Aula portal page which might set fresh cookies
-            portal_response = self._session.get(
-                "https://www.aula.dk/portal/", timeout=10, allow_redirects=True
+            old_profile_change = (
+                self._auth_cookies.get("profile_change")
+                if isinstance(self._auth_cookies, dict)
+                else None
             )
 
-            # Check if we got any updated cookies from the portal
-            new_profile_change = None
-            for cookie in self._session.cookies:
-                if cookie.name == "profile_change":
-                    new_profile_change = cookie.value
-                    break
-
-            if new_profile_change:
-                old_value = self._session.cookies.get("profile_change")
-                if new_profile_change != old_value:
-                    _LOGGER.info(
-                        f"Auto-detected profile_change update: {old_value} → {new_profile_change}"
-                    )
-
-                    # Update stored cookies for next time
-                    if hasattr(self, "_auth_cookies") and isinstance(
-                        self._auth_cookies, dict
-                    ):
-                        self._auth_cookies["profile_change"] = new_profile_change
-                        _LOGGER.debug(
-                            "Updated stored auth_cookies with new profile_change"
-                        )
-
-                        # Try to persist to Home Assistant config entry if available
-                        self._persist_updated_cookies()
-
-                    return True
-
-            # Try alternative: make a simple API call and check response/cookies
+            # Hit the portal page — the server sets the current profile_change cookie
             try:
-                api_response = self._session.get(
-                    "https://www.aula.dk/api/v22/?method=aulaToken.getAulaToken&widgetId=0001",
-                    timeout=5,
+                self._session.get(
+                    "https://www.aula.dk/portal/", timeout=10, allow_redirects=True
                 )
+            except requests.exceptions.RequestException as e:
+                _LOGGER.debug(f"Portal request failed: {e}")
 
-                # Check for any new profile_change value in response cookies
-                for cookie in self._session.cookies:
-                    if cookie.name == "profile_change":
-                        current_stored = (
-                            self._auth_cookies.get("profile_change")
-                            if hasattr(self, "_auth_cookies")
-                            else None
-                        )
-                        if cookie.value != current_stored:
-                            _LOGGER.info(
-                                f"Auto-detected profile_change from API call: {current_stored} → {cookie.value}"
-                            )
+            # Pick up whatever the server sent back
+            self._sync_cookies_from_session()
 
-                            if hasattr(self, "_auth_cookies") and isinstance(
-                                self._auth_cookies, dict
-                            ):
-                                self._auth_cookies["profile_change"] = cookie.value
-                                self._persist_updated_cookies()
+            new_profile_change = (
+                self._auth_cookies.get("profile_change")
+                if isinstance(self._auth_cookies, dict)
+                else None
+            )
 
-                            return True
+            if new_profile_change and new_profile_change != old_profile_change:
+                _LOGGER.info(
+                    f"profile_change synced from portal: {old_profile_change} → {new_profile_change}"
+                )
+                return True
 
-            except Exception as api_e:
-                _LOGGER.debug(f"API-based profile_change detection failed: {api_e}")
-
-            _LOGGER.debug("No profile_change update detected")
+            _LOGGER.debug("No profile_change update from portal")
             return False
 
         except Exception as e:
@@ -281,84 +244,99 @@ class SessionMixin:
             _LOGGER.error(f"Cookie persistence callback failed: {e}")
 
     def _auto_increment_profile_change(self):
-        """Auto-increment profile_change counter based on session token lifecycle to maintain session"""
+        """Sync profile_change counter from the server and keep session alive.
+
+        Instead of blindly incrementing, we read the actual profile_change
+        cookie that the server sends back after a lightweight API call.
+        This keeps us in sync even when the user uses Aula in their browser
+        simultaneously, and also serves as a session keep-alive.
+        """
         try:
             current_time = time.time()
 
-            # If session token time is not set, initialize it
             if self._session_token_time is None:
                 self._session_token_time = current_time
                 self._last_profile_change_increment = current_time
 
-            # Check if 30 minutes have passed since last increment (based on session token timing)
-            time_since_last_increment = (
+            time_since_last = (
                 current_time - self._last_profile_change_increment
                 if self._last_profile_change_increment is not None
                 else current_time - self._session_token_time
             )
 
-            if time_since_last_increment >= 1800:  # 30 minutes
-                if (
-                    isinstance(self._auth_cookies, dict)
-                    and "profile_change" in self._auth_cookies
-                ):
-                    try:
-                        # Get current profile_change value and increment it
-                        current_value = int(self._auth_cookies["profile_change"])
-                        new_value = current_value + 1
+            # Sync every 10 minutes (keeps PHP session alive & profile_change fresh)
+            if time_since_last < 600:  # 10 minutes
+                return
 
-                        # Update stored cookies
-                        self._auth_cookies["profile_change"] = str(new_value)
+            _LOGGER.debug("Running session keep-alive and profile_change sync")
 
-                        # Update session cookies if session exists
-                        if self._session:
-                            self._session.cookies.set("profile_change", str(new_value))
+            old_profile_change = (
+                self._auth_cookies.get("profile_change")
+                if isinstance(self._auth_cookies, dict)
+                else None
+            )
 
-                        _LOGGER.info(
-                            f"Auto-incremented profile_change (session-based): {current_value} → {new_value}"
-                        )
+            # Make a lightweight API call to keep the PHP session alive
+            # and let the server send us the current profile_change cookie
+            try:
+                resp = self._session.get(
+                    f"{API}{API_VERSION}/?method=profiles.getProfilesByLogin",
+                    verify=True,
+                    timeout=10,
+                )
 
-                        # Update timestamp
-                        self._last_profile_change_increment = current_time
-
-                        # Persist updated cookies
-                        self._persist_updated_cookies()
-
-                    except (ValueError, TypeError) as e:
-                        _LOGGER.warning(
-                            f"Could not parse profile_change value for auto-increment: {e}"
-                        )
+                if resp.status_code == 200:
+                    _LOGGER.debug("Session keep-alive successful")
                 else:
-                    # If this is the first time and we have profile_change in session cookies
-                    if self._session and self._session.cookies.get("profile_change"):
-                        session_value = self._session.cookies.get("profile_change")
-                        try:
-                            current_value = int(session_value)
-                            new_value = current_value + 1
+                    _LOGGER.debug(
+                        f"Session keep-alive returned status {resp.status_code}"
+                    )
+            except requests.exceptions.RequestException as e:
+                _LOGGER.debug(f"Session keep-alive request failed: {e}")
 
-                            # Update both stored and session cookies
-                            if isinstance(self._auth_cookies, dict):
-                                self._auth_cookies["profile_change"] = str(new_value)
+            # Read the actual profile_change value the server set in cookies
+            self._sync_cookies_from_session()
 
-                            self._session.cookies.set("profile_change", str(new_value))
+            new_profile_change = (
+                self._auth_cookies.get("profile_change")
+                if isinstance(self._auth_cookies, dict)
+                else None
+            )
 
-                            _LOGGER.info(
-                                f"Auto-incremented profile_change (session-based): {current_value} → {new_value}"
-                            )
+            if new_profile_change and new_profile_change != old_profile_change:
+                _LOGGER.info(
+                    f"profile_change synced from server: {old_profile_change} → {new_profile_change}"
+                )
 
-                            # Update timestamp
-                            self._last_profile_change_increment = current_time
-
-                            # Persist updated cookies
-                            self._persist_updated_cookies()
-
-                        except (ValueError, TypeError) as e:
-                            _LOGGER.warning(
-                                f"Could not parse session profile_change value for auto-increment: {e}"
-                            )
+            self._last_profile_change_increment = current_time
 
         except Exception as e:
-            _LOGGER.error(f"Error in auto-increment profile_change: {e}")
+            _LOGGER.error(f"Error in profile_change sync / keep-alive: {e}")
+
+    def _sync_cookies_from_session(self):
+        """Read cookies from the requests session and persist any updates.
+
+        After an API call, the server may update cookies (profile_change,
+        PHPSESSID rotation, etc.). Capture those changes so they survive
+        session re-initialization and HA restarts.
+        """
+        if not self._session or not isinstance(self._auth_cookies, dict):
+            return
+
+        changed = False
+        for cookie in self._session.cookies:
+            if cookie.domain and "aula.dk" not in cookie.domain:
+                continue
+            old = self._auth_cookies.get(cookie.name)
+            if old != cookie.value:
+                self._auth_cookies[cookie.name] = cookie.value
+                changed = True
+                _LOGGER.debug(
+                    f"Cookie updated from server: {cookie.name} = {old} → {cookie.value}"
+                )
+
+        if changed:
+            self._persist_updated_cookies()
 
     def login(self, show_browser=True):
         """Login via cookie-based authentication"""
