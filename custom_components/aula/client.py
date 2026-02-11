@@ -78,6 +78,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self._last_data_update = 0  # Rate limiting for data updates
         self._last_profile_change_increment = None  # Track when profile_change was last incremented based on session token
         self._session_token_time = None  # Track session token initialization time
+        self._session_valid = False  # Track actual session validity
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
         # Widget-based features now auto-detected from API
@@ -116,20 +117,25 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         # Clear cached widget tokens so they are re-fetched fresh each cycle
         self.tokens = {}
 
-        # Try to reuse existing session first
-        if (
-            self._auth_cookies
-            and self.init_session_with_cookies()
-            and self.test_session()
-        ):
-            _LOGGER.debug("Reusing existing session cookies")
-            # Ensure API is set up
-            if not hasattr(self, "apiurl"):
-                self._setup_post_login()
-        else:
-            _LOGGER.debug("Need to authenticate - cookies invalid or missing")
-            # Re-authenticate using the same cookies (they might work on retry)
-            if self._auth_cookies:
+        # Reuse existing session if still valid (avoids destroying server-set cookies)
+        have_valid_session = False
+        if self._session and getattr(self, "_session_valid", False):
+            # Auto-increment profile_change on existing session
+            self._auto_increment_profile_change()
+            # Validate session (rate-limited to every 5 minutes)
+            have_valid_session = self.test_session()
+
+        if not have_valid_session:
+            # Need to (re)initialize session from stored cookies
+            if not self._auth_cookies:
+                raise ConfigEntryNotReady(
+                    "No authentication cookies available. Please reconfigure the integration."
+                )
+
+            if self.init_session_with_cookies() and self.test_session():
+                _LOGGER.debug("Session initialized from stored cookies")
+            else:
+                _LOGGER.debug("Need to authenticate - cookies invalid or missing")
                 try:
                     self.login(show_browser=False)
                 except Exception as e:
@@ -137,17 +143,14 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     raise ConfigEntryNotReady(
                         "Authentication session expired. Please reconfigure the integration."
                     )
-            else:
-                raise ConfigEntryNotReady(
-                    "No authentication cookies available. Please reconfigure the integration."
-                )
 
-        # Test API access
+        # Ensure post-login setup is done
+        if not hasattr(self, "apiurl") or not hasattr(self, "_profiles") or not self._profiles:
+            self._setup_post_login()
+
+        # Verify API access with profiles data
         is_logged_in = False
-        if self._session and hasattr(self, "apiurl"):
-            # Auto-increment profile_change if 30 minutes have passed
-            self._auto_increment_profile_change()
-
+        if self._session and hasattr(self, "apiurl") and hasattr(self, "_profiles") and self._profiles:
             try:
                 response = self._session.get(
                     self.apiurl + "?method=profiles.getProfilesByLogin",
@@ -156,6 +159,9 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 )
                 data = _safe_json(response, "profiles.getProfilesByLogin")
                 is_logged_in = data.get("status", {}).get("message") == "OK"
+                if is_logged_in:
+                    # Keep profiles fresh
+                    self._profiles = data.get("data", {}).get("profiles", self._profiles)
             except Exception as e:
                 _LOGGER.warning(f"Failed to test API access: {e}")
                 is_logged_in = False
@@ -164,6 +170,8 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
 
         if not is_logged_in:
             _LOGGER.error("API access test failed - authentication may have expired")
+            # Invalidate session so next retry does a real check
+            self._invalidate_session()
             raise ConfigEntryNotReady(
                 "API access denied. Please reconfigure the integration with fresh cookies."
             )

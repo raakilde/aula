@@ -83,46 +83,53 @@ class SessionMixin:
 
         return True
 
+    def _invalidate_session(self):
+        """Reset session state so the next test_session performs a real check."""
+        self._last_session_test = 0
+        self._session_valid = False
+        if hasattr(self, "apiurl"):
+            del self.apiurl
+        _LOGGER.debug("Session state invalidated, will re-test on next call")
+
     def test_session(self):
-        """Test if current session is valid"""
+        """Test if current session is valid by checking actual API access."""
         # Rate limiting: only test session once per 5 minutes minimum
         current_time = time.time()
         if current_time - self._last_session_test < 300:  # 5 minutes
             _LOGGER.debug("Session test rate limited, using cached result")
-            return hasattr(self, "apiurl")  # Assume valid if we have API URL
+            return getattr(self, "_session_valid", False)
 
         self._last_session_test = current_time
 
         try:
-            # Test with the current API version endpoint using correct Aula API format
-            test_urls = [
-                "https://www.aula.dk/api/v22/?method=aulaToken.getAulaToken&widgetId=0018",  # Current version
-                "https://www.aula.dk/api/v21/?method=aulaToken.getAulaToken&widgetId=0018",  # Fallback
-                "https://www.aula.dk/api/v20/?method=aulaToken.getAulaToken&widgetId=0018",  # Fallback
-                "https://www.aula.dk/api/v19/?method=aulaToken.getAulaToken&widgetId=0018",  # Fallback
-            ]
+            # Test with the actual profiles endpoint - this is what we need to work
+            # Using the same endpoint as _setup_post_login avoids false positives
+            # where aulaToken passes but profiles returns 403
+            api_versions = ["22", "21", "20", "19"]
 
-            for url in test_urls:
+            for ver in api_versions:
+                url = f"https://www.aula.dk/api/v{ver}/?method=profiles.getProfilesByLogin"
                 _LOGGER.debug(f"Testing session with: {url}")
                 response = self._session.get(url, timeout=10)
 
-                # Debug response details
                 _LOGGER.debug(f"Response status: {response.status_code}")
-                _LOGGER.debug(f"Response headers: {dict(response.headers)}")
                 if response.status_code != 200:
                     _LOGGER.debug(f"Response content: {response.text[:500]}")
 
                 if response.status_code == 200:
                     try:
                         data = response.json()
-                        _LOGGER.debug(
-                            f"Response data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
-                        )
-                        # For aulaToken.getAulaToken, success means we got a "data" field with token
-                        if "data" in data and data["data"]:
+                        if (
+                            data.get("status", {}).get("message") == "OK"
+                            and "data" in data
+                            and "profiles" in data["data"]
+                        ):
                             _LOGGER.debug(
-                                f"Session valid, API version detected from {url}"
+                                f"Session valid, profiles loaded from API v{ver}"
                             )
+                            # Cache profiles so _setup_post_login can skip duplicate call
+                            self._profiles = data["data"]["profiles"]
+                            self._session_valid = True
                             return True
                     except (ValueError, KeyError) as e:
                         _LOGGER.debug(f"JSON parsing error: {e}")
@@ -131,26 +138,26 @@ class SessionMixin:
                     # API version not supported, try next
                     continue
                 elif response.status_code in [401, 403]:
-                    # Authentication failed
                     _LOGGER.debug(f"Authentication failed: {response.status_code}")
-                    # Add brief delay to prevent rapid retry loops
-                    time.sleep(1)
-                    return False
+                    break  # No point trying other versions
 
             _LOGGER.debug("All session test URLs failed")
 
             # Try to auto-sync profile_change counter before giving up
             if self._try_profile_change_sync():
                 _LOGGER.info(
-                    "Successfully auto-synced profile_change counter, retrying authentication"
+                    "Successfully auto-synced profile_change counter, retrying"
                 )
-                # Add delay to prevent rapid retries
-                time.sleep(5)
-                return self._retry_session_test()
+                time.sleep(3)
+                result = self._retry_session_test()
+                self._session_valid = result
+                return result
 
+            self._session_valid = False
             return False
         except Exception as e:
             _LOGGER.debug(f"Session test error: {e}")
+            self._session_valid = False
             return False
 
     def _try_profile_change_sync(self):
@@ -234,14 +241,18 @@ class SessionMixin:
     def _retry_session_test(self):
         """Retry session test after profile_change sync"""
         try:
-            # Quick single test with updated cookies
-            test_url = "https://www.aula.dk/api/v22/?method=aulaToken.getAulaToken&widgetId=0018"
+            test_url = f"{API}{API_VERSION}/?method=profiles.getProfilesByLogin"
             response = self._session.get(test_url, timeout=10)
 
             if response.status_code == 200:
                 try:
                     data = response.json()
-                    if "data" in data and data["data"]:
+                    if (
+                        data.get("status", {}).get("message") == "OK"
+                        and "data" in data
+                        and "profiles" in data["data"]
+                    ):
+                        self._profiles = data["data"]["profiles"]
                         _LOGGER.info(
                             "Session test successful after profile_change sync"
                         )
@@ -353,6 +364,9 @@ class SessionMixin:
         """Login via cookie-based authentication"""
         _LOGGER.info("Starting authentication...")
 
+        # Reset rate limiter so test_session does a real check
+        self._last_session_test = 0
+
         # Try to reuse existing session cookies
         if self._auth_cookies and self.init_session_with_cookies():
             if self.test_session():
@@ -373,49 +387,75 @@ class SessionMixin:
     def _setup_post_login(self):
         """Setup API access after successful login"""
         try:
-            # Find the API version and setup endpoints
-            self.apiurl = API + API_VERSION
+            # Set API URL with trailing slash (matches Aula's expected URL format)
+            self.apiurl = API + API_VERSION + "/"
             apiver = int(API_VERSION)
 
-            # Use API v22 directly - no version detection needed
-            _LOGGER.debug(f"Using API v{apiver} at " + self.apiurl)
+            _LOGGER.debug(f"Using API v{apiver} at {self.apiurl}")
             try:
-                ver = self._session.get(
-                    self.apiurl + "?method=profiles.getProfilesByLogin",
-                    verify=True,
-                    timeout=10,
-                )
-
-                if ver.status_code == 403:
-                    msg = "Access to Aula API was denied. Please check your authentication."
-                    _LOGGER.error(msg)
-                    raise ConfigEntryNotReady(msg)
-                elif ver.status_code == 200:
-                    try:
-                        response_data = ver.json()
-                        if (
-                            "data" in response_data
-                            and "profiles" in response_data["data"]
-                        ):
-                            self._profiles = response_data["data"]["profiles"]
-                            _LOGGER.info(f"Successfully connected to API {self.apiurl}")
-                        else:
-                            _LOGGER.error(
-                                "API response missing expected data structure"
-                            )
-                            raise ConfigEntryNotReady(
-                                "API response missing expected data structure"
-                            )
-                    except ValueError as e:
-                        _LOGGER.error(f"Invalid JSON response from API: {e}")
-                        raise ConfigEntryNotReady(
-                            f"Invalid JSON response from API: {e}"
-                        )
-                else:
-                    _LOGGER.error(f"API returned unexpected status: {ver.status_code}")
-                    raise ConfigEntryNotReady(
-                        f"API returned unexpected status: {ver.status_code}"
+                # If test_session already loaded profiles, skip the duplicate call
+                if hasattr(self, "_profiles") and self._profiles:
+                    _LOGGER.debug(
+                        "Profiles already loaded from session test, skipping duplicate API call"
                     )
+                else:
+                    ver = self._session.get(
+                        self.apiurl + "?method=profiles.getProfilesByLogin",
+                        verify=True,
+                        timeout=10,
+                    )
+
+                    if ver.status_code == 403:
+                        _LOGGER.warning(
+                            "Got 403 from profiles API, attempting profile_change sync"
+                        )
+                        if self._try_profile_change_sync():
+                            time.sleep(3)
+                            ver = self._session.get(
+                                self.apiurl + "?method=profiles.getProfilesByLogin",
+                                verify=True,
+                                timeout=10,
+                            )
+                        if ver.status_code == 403:
+                            self._invalidate_session()
+                            msg = (
+                                "Adgang til Aula API blev nægtet (HTTP 403). "
+                                "Dine session-cookies er sandsynligvis udløbet. "
+                                "Gå til Indstillinger → Integrationer → Aula → Konfigurer "
+                                "og indsæt friske cookies fra din browser efter MitID-login."
+                            )
+                            _LOGGER.error(msg)
+                            raise ConfigEntryNotReady(msg)
+                    elif ver.status_code == 200:
+                        try:
+                            response_data = ver.json()
+                            if (
+                                "data" in response_data
+                                and "profiles" in response_data["data"]
+                            ):
+                                self._profiles = response_data["data"]["profiles"]
+                                _LOGGER.info(
+                                    f"Successfully connected to API {self.apiurl}"
+                                )
+                            else:
+                                _LOGGER.error(
+                                    "API response missing expected data structure"
+                                )
+                                raise ConfigEntryNotReady(
+                                    "API response missing expected data structure"
+                                )
+                        except ValueError as e:
+                            _LOGGER.error(f"Invalid JSON response from API: {e}")
+                            raise ConfigEntryNotReady(
+                                f"Invalid JSON response from API: {e}"
+                            )
+                    else:
+                        _LOGGER.error(
+                            f"API returned unexpected status: {ver.status_code}"
+                        )
+                        raise ConfigEntryNotReady(
+                            f"API returned unexpected status: {ver.status_code}"
+                        )
 
             except requests.exceptions.RequestException as e:
                 _LOGGER.error(f"API request failed: {e}")
