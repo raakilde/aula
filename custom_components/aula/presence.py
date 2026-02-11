@@ -26,13 +26,18 @@ class PresenceMixin:
 
             # Get presence templates for current week
             try:
-                response_current = self._session.get(
+                resp_current = self._session.get(
                     self.apiurl
                     + f"?method=presence.getPresenceTemplates&week={current_week}&childIds[]="
                     + "&childIds[]=".join(self._childids),
                     verify=True,
                     timeout=10,
-                ).json()
+                )
+                if resp_current.status_code != 200:
+                    raise Exception(
+                        f"presence.getPresenceTemplates returned status {resp_current.status_code}"
+                    )
+                response_current = resp_current.json()
 
                 if (
                     response_current.get("status", {}).get("message") == "OK"
@@ -54,13 +59,18 @@ class PresenceMixin:
 
             # Get presence templates for next week
             try:
-                response_next = self._session.get(
+                resp_next = self._session.get(
                     self.apiurl
                     + f"?method=presence.getPresenceTemplates&week={next_week}&childIds[]="
                     + "&childIds[]=".join(self._childids),
                     verify=True,
                     timeout=10,
-                ).json()
+                )
+                if resp_next.status_code != 200:
+                    raise Exception(
+                        f"presence.getPresenceTemplates returned status {resp_next.status_code}"
+                    )
+                response_next = resp_next.json()
 
                 if (
                     response_next.get("status", {}).get("message") == "OK"

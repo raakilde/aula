@@ -25,7 +25,7 @@ class MinUddannelse:
     ):
         _LOGGER.debug("Getting Min Uddannelse Forløb")
 
-        children = session.get(
+        response = session.get(
             MIN_UDDANNELSE_API
             + "/forloeb?"
             + "assuranceLevel=2"
@@ -42,7 +42,13 @@ class MinUddannelse:
             + "&userProfile=guardian",
             headers={"Authorization": token, "accept": "application/json"},
             verify=True,
-        ).json()["personer"]
+        )
+        if response.status_code != 200:
+            _LOGGER.warning(
+                f"MinUddannelse forloeb API returned status {response.status_code}"
+            )
+            return {}
+        children = response.json()["personer"]
 
         header = {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -126,8 +132,7 @@ class MinUddannelse:
         anchor_element = anchor_element.find("a")
         elevid = anchor_element.get("href").replace("minuge/", "")
 
-        result = session.get(
-            # MIN_UDDANNELSE_API
+        response = session.get(
             "https://www.minuddannelse.net/api/stamdata/ugeplan/getUgeBreve?"
             + "tidspunkt="
             + week
@@ -136,7 +141,13 @@ class MinUddannelse:
             + "&_="
             + str(round(time.time())),
             headers={"accept": "application/json"},
-        ).json()["ugebreve"][0]["indhold"]
+        )
+        if response.status_code != 200:
+            _LOGGER.warning(
+                f"MinUddannelse getUgeBreve returned status {response.status_code}"
+            )
+            return ""
+        result = response.json()["ugebreve"][0]["indhold"]
 
         _html = BeautifulSoup(result, "lxml")
         return _html.getText()
@@ -179,8 +190,7 @@ class MinUddannelse:
 
         elevid = anchor_link.get("href").replace("minuge/", "")
 
-        opgaver = session.get(
-            # MIN_UDDANNELSE_API
+        response = session.get(
             "https://www.minuddannelse.net/api/forloebsafvikling/opgaver/getOpgaveliste?"
             + "tidspunkt="
             + week
@@ -189,6 +199,12 @@ class MinUddannelse:
             + "&_="
             + str(round(time.time())),
             headers={"accept": "application/json"},
-        ).json()["opgaver"]
+        )
+        if response.status_code != 200:
+            _LOGGER.warning(
+                f"MinUddannelse getOpgaveliste returned status {response.status_code}"
+            )
+            return {}
+        opgaver = response.json()["opgaver"]
 
         return opgaver

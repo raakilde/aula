@@ -35,6 +35,15 @@ from .widgets import WidgetsMixin
 _LOGGER = logging.getLogger(__name__)
 
 
+def _safe_json(response, context="API call"):
+    """Parse JSON from response, raising on non-200 status or empty body."""
+    if response.status_code != 200:
+        raise Exception(
+            f"{context} returned status {response.status_code}"
+        )
+    return response.json()
+
+
 class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
     huskeliste = {}
     presence = {}
@@ -144,8 +153,9 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     self.apiurl + "?method=profiles.getProfilesByLogin",
                     verify=True,
                     timeout=10,
-                ).json()
-                is_logged_in = response.get("status", {}).get("message") == "OK"
+                )
+                data = _safe_json(response, "profiles.getProfilesByLogin")
+                is_logged_in = data.get("status", {}).get("message") == "OK"
             except Exception as e:
                 _LOGGER.warning(f"Failed to test API access: {e}")
                 is_logged_in = False
@@ -214,10 +224,11 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 + "?method=presence.getDailyOverview&childIds[]="
                 + str(child["id"]),
                 verify=True,
-            ).json()
-            if len(response["data"]) > 0:
+            )
+            data = _safe_json(response, f"presence.getDailyOverview child={child['id']}")
+            if len(data["data"]) > 0:
                 self.presence[str(child["id"])] = 1
-                self._daily_overview[str(child["id"])] = response["data"][0]
+                self._daily_overview[str(child["id"])] = data["data"][0]
             else:
                 _LOGGER.warn(
                     "Unable to retrieve presence data from Aula from child with id "
@@ -254,7 +265,8 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             self.unread_messages = 0
             unread = 0
             self.message = {}
-            for mes in mesres.json()["data"]["threads"]:
+            mesdata = _safe_json(mesres, "messaging.getThreads")
+            for mes in mesdata["data"]["threads"]:
                 if not mes["read"]:
                     unread = 1
                     threadid = mes["id"]
@@ -276,14 +288,15 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     + "&page=0",
                     verify=True,
                 )
-                if threadres.json()["status"]["code"] == 403:
+                threaddata = _safe_json(threadres, "messaging.getMessagesForThread")
+                if threaddata["status"]["code"] == 403:
                     self.message["text"] = (
                         "Log ind på Aula med MitID for at læse denne besked."
                     )
                     self.message["sender"] = "Ukendt afsender"
                     self.message["subject"] = "Følsom besked"
                 else:
-                    for message in threadres.json()["data"]["messages"]:
+                    for message in threaddata["data"]["messages"]:
                         if message["messageType"] == "Message":
                             try:
                                 self.message["text"] = message["text"]["html"]
@@ -300,7 +313,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             except:
                                 self.message["sender"] = "Ukendt afsender"
                             try:
-                                self.message["subject"] = threadres.json()["data"][
+                                self.message["subject"] = threaddata["data"][
                                     "subject"
                                 ]
                             except:
@@ -558,10 +571,13 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
 
         # Ugeplaner:
         if self._ugeplan is True:
-            guardian = self._session.get(
-                self.apiurl + "?method=profiles.getProfileContext&portalrole=guardian",
-                verify=True,
-            ).json()["data"]["userId"]
+            guardian = _safe_json(
+                self._session.get(
+                    self.apiurl + "?method=profiles.getProfileContext&portalrole=guardian",
+                    verify=True,
+                ),
+                "profiles.getProfileContext",
+            )["data"]["userId"]
             childUserIds = ",".join(self._childuserids)
 
             if len(self.widgets) == 0:
@@ -613,7 +629,8 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         headers={"Authorization": token, "accept": "application/json"},
                         verify=True,
                     )
-                    for person in ugeplaner.json()["personer"]:
+                    ugedata = _safe_json(ugeplaner, "MinUddannelse ugebrev")
+                    for person in ugedata["personer"]:
                         ugeplan = person["institutioner"][0]["ugebreve"][0]["indhold"]
                         if thisnext == "this":
                             self.ugep_attr[person["navn"].split()[0]] = ugeplan

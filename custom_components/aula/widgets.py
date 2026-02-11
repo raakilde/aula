@@ -22,6 +22,11 @@ class WidgetsMixin:
             response = self._session.get(
                 self.apiurl + "?method=profiles.getProfileContext", verify=True
             )
+            if response.status_code != 200:
+                _LOGGER.warning(
+                    f"profiles.getProfileContext returned status {response.status_code}"
+                )
+                return
             profile_context = response.json()
 
             if profile_context.get("status", {}).get("message") == "OK":
