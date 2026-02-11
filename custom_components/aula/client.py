@@ -104,6 +104,9 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self._last_data_update = current_time
         _LOGGER.debug("Starting data update cycle...")
 
+        # Clear cached widget tokens so they are re-fetched fresh each cycle
+        self.tokens = {}
+
         # Try to reuse existing session first
         if (
             self._auth_cookies
