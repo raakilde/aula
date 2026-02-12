@@ -15,83 +15,102 @@ class PresenceMixin:
     def _get_presence_templates(self):
         """Get weekly schedule presence templates (current and next week)"""
         try:
-            # Get current and next week in the required format
-            current_week = datetime.datetime.now().strftime("%Y-W%W")
-            next_week_date = datetime.datetime.now() + datetime.timedelta(weeks=1)
-            next_week = next_week_date.strftime("%Y-W%W")
+            today = datetime.date.today()
+
+            # Calculate current week (Monday to Sunday)
+            current_monday = today - datetime.timedelta(days=today.weekday())
+            current_sunday = current_monday + datetime.timedelta(days=6)
+
+            # Calculate next week
+            next_monday = current_monday + datetime.timedelta(days=7)
+            next_sunday = next_monday + datetime.timedelta(days=6)
+
+            # Get child profile IDs (same IDs used by _get_weekly_presence)
+            child_profile_ids = self._get_dynamic_child_profile_ids()
+            if not child_profile_ids:
+                _LOGGER.warning("No child profile IDs available for presence templates")
+                self.presence_templates = {}
+                self.presence_templates_next = {}
+                return
 
             _LOGGER.debug(
-                f"Fetching presence templates for weeks: {current_week}, {next_week}"
+                f"Fetching presence templates: {current_monday}–{current_sunday}, {next_monday}–{next_sunday}"
             )
 
-            # Get presence templates for current week
-            try:
-                resp_current = self._session.get(
-                    self.apiurl
-                    + f"?method=presence.getPresenceTemplates&week={current_week}&childIds[]="
-                    + "&childIds[]=".join(self._childids),
-                    verify=True,
-                    timeout=10,
-                )
-                if resp_current.status_code != 200:
-                    raise Exception(
-                        f"presence.getPresenceTemplates returned status {resp_current.status_code}"
-                    )
-                response_current = resp_current.json()
+            # Fetch current week
+            self.presence_templates = self._fetch_and_format_schedule_templates(
+                current_monday, current_sunday, child_profile_ids, "current"
+            )
 
-                if (
-                    response_current.get("status", {}).get("message") == "OK"
-                    and "data" in response_current
-                ):
-                    self.presence_templates = response_current["data"]
-                    _LOGGER.debug(
-                        f"Retrieved presence templates for current week: {len(self.presence_templates)} entries"
-                    )
-                else:
-                    _LOGGER.warning(
-                        "No presence template data available for current week"
-                    )
-                    self.presence_templates = {}
-
-            except Exception as e:
-                _LOGGER.error(f"Error fetching current week presence templates: {e}")
-                self.presence_templates = {}
-
-            # Get presence templates for next week
-            try:
-                resp_next = self._session.get(
-                    self.apiurl
-                    + f"?method=presence.getPresenceTemplates&week={next_week}&childIds[]="
-                    + "&childIds[]=".join(self._childids),
-                    verify=True,
-                    timeout=10,
-                )
-                if resp_next.status_code != 200:
-                    raise Exception(
-                        f"presence.getPresenceTemplates returned status {resp_next.status_code}"
-                    )
-                response_next = resp_next.json()
-
-                if (
-                    response_next.get("status", {}).get("message") == "OK"
-                    and "data" in response_next
-                ):
-                    self.presence_templates_next = response_next["data"]
-                    _LOGGER.debug(
-                        f"Retrieved presence templates for next week: {len(self.presence_templates_next)} entries"
-                    )
-                else:
-                    _LOGGER.warning("No presence template data available for next week")
-                    self.presence_templates_next = {}
-
-            except Exception as e:
-                _LOGGER.error(f"Error fetching next week presence templates: {e}")
-                self.presence_templates_next = {}
+            # Fetch next week
+            self.presence_templates_next = self._fetch_and_format_schedule_templates(
+                next_monday, next_sunday, child_profile_ids, "next"
+            )
 
         except Exception as e:
             _LOGGER.error(f"Error in _get_presence_templates: {e}")
             self.presence_templates = {}
             self.presence_templates_next = {}
+
+    def _fetch_and_format_schedule_templates(
+        self, start_date, end_date, child_profile_ids, week_label
+    ):
+        """Fetch presence templates using fromDate/toDate API and format for schedule sensors."""
+        try:
+            from_date = start_date.strftime("%Y-%m-%d")
+            to_date = end_date.strftime("%Y-%m-%d")
+
+            url_params = f"method=presence.getPresenceTemplates&fromDate={from_date}&toDate={to_date}"
+            for pid in child_profile_ids:
+                url_params += f"&filterInstitutionProfileIds[]={pid}"
+
+            resp = self._session.get(
+                f"{self.apiurl}?{url_params}",
+                verify=True,
+                timeout=15,
+            )
+
+            if resp.status_code != 200:
+                _LOGGER.error(
+                    f"presence.getPresenceTemplates ({week_label} week) returned status {resp.status_code}"
+                )
+                return {}
+
+            result = resp.json()
+            if result.get("status", {}).get("message") != "OK":
+                _LOGGER.warning(
+                    f"Non-OK status for {week_label} week presence templates"
+                )
+                return {}
+
+            data = result.get("data", {})
+            templates = data.get("presenceWeekTemplates", [])
+
+            # Format keyed by child first name (what schedule sensors expect)
+            formatted = {}
+            for template in templates:
+                inst_profile = template.get("institutionProfile", {})
+                child_name = inst_profile.get("name", "")
+                first_name = child_name.split()[0] if child_name else ""
+                institution_name = inst_profile.get("institutionName", "")
+
+                if not first_name:
+                    continue
+
+                formatted[first_name] = {
+                    "child_name": child_name,
+                    "institution": institution_name,
+                    "day_templates": template.get("dayTemplates", []),
+                }
+
+            _LOGGER.debug(
+                f"Retrieved presence templates for {week_label} week: {len(formatted)} children"
+            )
+            return formatted
+
+        except Exception as e:
+            _LOGGER.error(f"Error fetching {week_label} week presence templates: {e}")
+            return {}
 
     def _get_closed_days(self):
         """Get closed days (lukkedage) for all institutions"""

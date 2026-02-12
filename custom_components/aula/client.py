@@ -79,6 +79,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self._last_profile_change_increment = None  # Track when profile_change was last incremented based on session token
         self._session_token_time = None  # Track session token initialization time
         self._session_valid = False  # Track actual session validity
+        self._session_created_time = None  # Track when session was first established
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
         # Widget-based features now auto-detected from API
@@ -152,11 +153,13 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         is_logged_in = False
         if self._session and hasattr(self, "apiurl") and hasattr(self, "_profiles") and self._profiles:
             try:
+                self._increment_profile_change()
                 response = self._session.get(
                     self.apiurl + "?method=profiles.getProfilesByLogin",
                     verify=True,
                     timeout=10,
                 )
+                self._increment_profile_change()
                 data = _safe_json(response, "profiles.getProfilesByLogin")
                 is_logged_in = data.get("status", {}).get("message") == "OK"
                 if is_logged_in:
@@ -828,3 +831,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             # Initialize empty mail data on error
             self.mail_threads = {}
             self.mail_by_child = {}
+
+        # Persist cookies (with updated profile_change) so they survive HA restarts
+        self._sync_cookies_from_session()
+        self._persist_updated_cookies()

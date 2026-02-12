@@ -80,6 +80,12 @@ class SessionMixin:
         self._session_token_time = time.time()
         # Initialize profile_change timing based on session token time
         self._last_profile_change_increment = self._session_token_time
+        # Track when cookies were first provided (for age logging)
+        if (
+            not hasattr(self, "_session_created_time")
+            or self._session_created_time is None
+        ):
+            self._session_created_time = self._session_token_time
 
         return True
 
@@ -244,12 +250,12 @@ class SessionMixin:
             _LOGGER.error(f"Cookie persistence callback failed: {e}")
 
     def _auto_increment_profile_change(self):
-        """Sync profile_change counter from the server and keep session alive.
+        """Increment profile_change counter and keep session alive.
 
-        Instead of blindly incrementing, we read the actual profile_change
-        cookie that the server sends back after a lightweight API call.
-        This keeps us in sync even when the user uses Aula in their browser
-        simultaneously, and also serves as a session keep-alive.
+        Aula's browser JavaScript increments profile_change by +1 after
+        every API call. The server expects this counter to increase over
+        time — if it stays static, the session is eventually killed.
+        We also make a lightweight API call to keep the PHP session alive.
         """
         try:
             current_time = time.time()
@@ -264,20 +270,28 @@ class SessionMixin:
                 else current_time - self._session_token_time
             )
 
-            # Sync every 10 minutes (keeps PHP session alive & profile_change fresh)
-            if time_since_last < 600:  # 10 minutes
+            # Run every 30 minutes (keeps PHP session alive & profile_change moving)
+            if time_since_last < 1800:  # 30 minutes
                 return
 
-            _LOGGER.debug("Running session keep-alive and profile_change sync")
+            # Log session age
+            if self._session_created_time:
+                age_hours = (current_time - self._session_created_time) / 3600
+                if age_hours > 20:
+                    _LOGGER.warning(
+                        f"Session er {age_hours:.1f} timer gammel — overvej at opdatere cookies snart"
+                    )
+                elif age_hours > 12:
+                    _LOGGER.info(f"Session alder: {age_hours:.1f} timer")
+                else:
+                    _LOGGER.debug(f"Session alder: {age_hours:.1f} timer")
 
-            old_profile_change = (
-                self._auth_cookies.get("profile_change")
-                if isinstance(self._auth_cookies, dict)
-                else None
-            )
+            # Increment profile_change (like Aula's browser JS does)
+            self._increment_profile_change()
+
+            _LOGGER.debug("Running session keep-alive with profile_change sync")
 
             # Make a lightweight API call to keep the PHP session alive
-            # and let the server send us the current profile_change cookie
             try:
                 resp = self._session.get(
                     f"{API}{API_VERSION}/?method=profiles.getProfilesByLogin",
@@ -287,6 +301,8 @@ class SessionMixin:
 
                 if resp.status_code == 200:
                     _LOGGER.debug("Session keep-alive successful")
+                    # Increment again after successful call (browser does this)
+                    self._increment_profile_change()
                 else:
                     _LOGGER.debug(
                         f"Session keep-alive returned status {resp.status_code}"
@@ -294,24 +310,41 @@ class SessionMixin:
             except requests.exceptions.RequestException as e:
                 _LOGGER.debug(f"Session keep-alive request failed: {e}")
 
-            # Read the actual profile_change value the server set in cookies
+            # Pick up any other cookie changes from the server
             self._sync_cookies_from_session()
-
-            new_profile_change = (
-                self._auth_cookies.get("profile_change")
-                if isinstance(self._auth_cookies, dict)
-                else None
-            )
-
-            if new_profile_change and new_profile_change != old_profile_change:
-                _LOGGER.info(
-                    f"profile_change synced from server: {old_profile_change} → {new_profile_change}"
-                )
 
             self._last_profile_change_increment = current_time
 
         except Exception as e:
             _LOGGER.error(f"Error in profile_change sync / keep-alive: {e}")
+
+    def _increment_profile_change(self):
+        """Increment profile_change by 1 in cookies, session jar, and auth dict.
+
+        This mimics Aula's browser JavaScript which increments profile_change
+        after every API request. The server uses this as part of CSRF protection.
+        """
+        if not isinstance(self._auth_cookies, dict):
+            return
+
+        try:
+            current_val = int(self._auth_cookies.get("profile_change", "0"))
+        except (ValueError, TypeError):
+            current_val = 0
+
+        new_val = str(current_val + 1)
+        self._auth_cookies["profile_change"] = new_val
+
+        # Update the session cookie jar so the next request sends the new value
+        if self._session:
+            self._session.cookies.set(
+                "profile_change",
+                new_val,
+                domain=".aula.dk",
+                path="/",
+            )
+
+        _LOGGER.debug(f"profile_change incremented: {current_val} → {new_val}")
 
     def _sync_cookies_from_session(self):
         """Read cookies from the requests session and persist any updates.
@@ -334,6 +367,13 @@ class SessionMixin:
                 _LOGGER.debug(
                     f"Cookie updated from server: {cookie.name} = {old} → {cookie.value}"
                 )
+
+                # Keep the CSRF request header in sync with the rotated cookie
+                if cookie.name == "Csrfp-Token" and self._session:
+                    self._session.headers["csrfp-token"] = cookie.value
+                    _LOGGER.debug(
+                        "Updated csrfp-token request header to match rotated cookie"
+                    )
 
         if changed:
             self._persist_updated_cookies()

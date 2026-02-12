@@ -54,19 +54,30 @@ async def async_setup_entry(
 
     # Create callback for persisting updated cookies
     def persist_cookies_callback(updated_cookies):
-        """Callback to persist updated cookies to config entry"""
+        """Callback to persist updated cookies to config entry.
+
+        This may be called from a SyncWorker thread, so we schedule the
+        async_update_entry call on the event loop to avoid thread-safety
+        issues.
+        """
         try:
             _LOGGER.info("Persisting auto-synced cookies to config entry")
-            new_data = dict(config_entry.data)
-            new_data[CONF_AUTH_COOKIES] = updated_cookies
 
-            hass.config_entries.async_update_entry(
-                config_entry,
-                data=new_data,
-            )
-            _LOGGER.debug("Successfully persisted auto-synced cookies")
+            def _do_update():
+                try:
+                    new_data = dict(config_entry.data)
+                    new_data[CONF_AUTH_COOKIES] = updated_cookies
+                    hass.config_entries.async_update_entry(
+                        config_entry,
+                        data=new_data,
+                    )
+                    _LOGGER.debug("Successfully persisted auto-synced cookies")
+                except Exception as exc:
+                    _LOGGER.error(f"Failed to persist updated cookies: {exc}")
+
+            hass.loop.call_soon_threadsafe(_do_update)
         except Exception as e:
-            _LOGGER.error(f"Failed to persist updated cookies: {e}")
+            _LOGGER.error(f"Failed to schedule cookie persistence: {e}")
 
     client = Client(
         config[CONF_SCHOOLSCHEDULE],
