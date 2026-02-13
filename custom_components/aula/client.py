@@ -123,8 +123,12 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         if self._session and getattr(self, "_session_valid", False):
             # Auto-increment profile_change on existing session
             self._auto_increment_profile_change()
-            # Validate session (rate-limited to every 5 minutes)
-            have_valid_session = self.test_session()
+            # If keep-alive detected session expiry, skip test and go to recovery
+            if not getattr(self, "_session_valid", False):
+                _LOGGER.debug("Keep-alive detected expired session, skipping test")
+            else:
+                # Validate session (rate-limited to every 5 minutes)
+                have_valid_session = self.test_session()
 
         if not have_valid_session:
             # Need to (re)initialize session from stored cookies
@@ -132,6 +136,10 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 raise ConfigEntryNotReady(
                     "No authentication cookies available. Please reconfigure the integration."
                 )
+
+            # Reset rate limiter so test_session does a real check
+            # (it may have been set moments ago by a failed keep-alive)
+            self._last_session_test = 0
 
             if self.init_session_with_cookies() and self.test_session():
                 _LOGGER.debug("Session initialized from stored cookies")

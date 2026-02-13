@@ -270,8 +270,8 @@ class SessionMixin:
                 else current_time - self._session_token_time
             )
 
-            # Run every 30 minutes (keeps PHP session alive & profile_change moving)
-            if time_since_last < 1800:  # 30 minutes
+            # Run every 15 minutes (keeps PHP session alive & profile_change moving)
+            if time_since_last < 900:  # 15 minutes
                 return
 
             # Log session age
@@ -303,17 +303,26 @@ class SessionMixin:
                     _LOGGER.debug("Session keep-alive successful")
                     # Increment again after successful call (browser does this)
                     self._increment_profile_change()
+                    # Pick up any cookie changes from the server
+                    self._sync_cookies_from_session()
+                    self._last_profile_change_increment = current_time
                 else:
-                    _LOGGER.debug(
+                    _LOGGER.warning(
                         f"Session keep-alive returned status {resp.status_code}"
                     )
+                    if resp.status_code in (401, 403):
+                        _LOGGER.warning(
+                            "Session expired server-side, invalidating session"
+                        )
+                        self._session_valid = False
+                        self._last_session_test = 0  # Reset rate limiter so recovery can do a real test
+                    # Don't update _last_profile_change_increment on failure
+                    # so keep-alive retries sooner
+                    return
             except requests.exceptions.RequestException as e:
                 _LOGGER.debug(f"Session keep-alive request failed: {e}")
-
-            # Pick up any other cookie changes from the server
-            self._sync_cookies_from_session()
-
-            self._last_profile_change_increment = current_time
+                # Don't update timing on failure
+                return
 
         except Exception as e:
             _LOGGER.error(f"Error in profile_change sync / keep-alive: {e}")
