@@ -88,11 +88,11 @@ class CalendarData:
         import json
 
         try:
-            with open("skoleskema.json", "r") as openfile:
+            with open(self._client._data_path("skoleskema.json"), "r") as openfile:
                 _data = json.load(openfile)
             data = json.loads(_data)
-        except:
-            _LOGGER.warn("Could not open and parse file skoleskema.json!")
+        except (OSError, json.JSONDecodeError, ValueError) as e:
+            _LOGGER.warning("Could not open and parse file skoleskema.json: %s", e)
             return False
         events = []
         _LOGGER.debug("Parsing skoleskema.json...")
@@ -110,11 +110,11 @@ class CalendarData:
                 if vikar == 0:
                     try:
                         teacher = c["lesson"]["participants"][0]["teacherInitials"]
-                    except:
+                    except (KeyError, IndexError, TypeError):
                         try:
                             _LOGGER.debug("Lesson json dump" + str(c["lesson"]))
                             teacher = c["lesson"]["participants"][0]["teacherName"]
-                        except:
+                        except (KeyError, IndexError, TypeError):
                             _LOGGER.debug(
                                 "Could not find any teacher information for "
                                 + summary

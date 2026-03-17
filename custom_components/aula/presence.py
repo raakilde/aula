@@ -66,6 +66,7 @@ class PresenceMixin:
 
             resp = self._session.get(
                 f"{self.apiurl}?{url_params}",
+                headers=self._auth_headers(),
                 verify=True,
                 timeout=15,
             )
@@ -131,7 +132,7 @@ class PresenceMixin:
             _LOGGER.debug(f"Fetching closed days from: {url}")
 
             try:
-                response = self._session.get(url, verify=True, timeout=10)
+                response = self._session.get(url, headers=self._auth_headers(), verify=True, timeout=10)
 
                 if response.status_code == 200:
                     data = response.json()
@@ -317,35 +318,36 @@ class PresenceMixin:
 
             response = self._session.get(
                 full_url,
+                headers=self._auth_headers(),
                 verify=True,
                 timeout=15,
             )
 
-            _LOGGER.info(f"PRESENCE API CALL: {full_url}")
-            _LOGGER.info(f"Response status: {response.status_code}")
+            _LOGGER.debug("PRESENCE API CALL: presence.getPresenceTemplates")
+            _LOGGER.debug(f"Response status: {response.status_code}")
 
             if response.status_code == 200:
                 result = response.json()
-                _LOGGER.info(
+                _LOGGER.debug(
                     f"API response keys: {list(result.keys()) if isinstance(result, dict) else type(result)}"
                 )
-                _LOGGER.info(f"API status: {result.get('status', {})}")
+                _LOGGER.debug(f"API status: {result.get('status', {})}")
 
                 if result.get("status", {}).get("message") == "OK":
                     data = result.get("data", {})
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"Data keys: {list(data.keys()) if isinstance(data, dict) else type(data)}"
                     )
 
                     if "presenceWeekTemplates" in data:
                         templates = data["presenceWeekTemplates"]
-                        _LOGGER.info(f"Found {len(templates)} presence week templates")
+                        _LOGGER.debug(f"Found {len(templates)} presence week templates")
                         for i, template in enumerate(templates):
                             institution_profile = template.get("institutionProfile", {})
                             child_id = institution_profile.get("id")
                             child_name = institution_profile.get("name", "Unknown")
                             day_templates = template.get("dayTemplates", [])
-                            _LOGGER.info(
+                            _LOGGER.debug(
                                 f"Template {i}: Child {child_name} (ID: {child_id}) - {len(day_templates)} days"
                             )
                     else:

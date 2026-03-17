@@ -30,7 +30,7 @@ class AulaEducationSensor(Entity):
             if forloeb and forloeb != "Not available":
                 return "active"
             return "none"
-        except:
+        except (KeyError, TypeError):
             return "unavailable"
 
     @property
@@ -40,14 +40,14 @@ class AulaEducationSensor(Entity):
             attributes["course_this_week"] = self._client.forloebthisweek[
                 self._child["name"]
             ]
-        except:
+        except (KeyError, TypeError):
             attributes["course_this_week"] = "Not available"
 
         try:
             attributes["course_next_week"] = self._client.forloebthisweek[
                 self._child["name"]
             ]
-        except:
+        except (KeyError, TypeError):
             attributes["course_next_week"] = "Not available"
 
         return attributes

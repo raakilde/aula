@@ -19,13 +19,16 @@ class SessionMixin:
     """Mixin providing session management methods for the Aula Client."""
 
     def _get_api_url(self, method_query):
-        """Build API URL, appending access_token."""
-        url = self.apiurl + method_query
+        """Build API URL (without token — use _auth_headers instead)."""
+        return self.apiurl + method_query
+
+    def _auth_headers(self):
+        """Return headers with the access token as a Bearer token."""
+        headers = {}
         access_token = getattr(self, "_access_token", None)
         if access_token:
-            separator = "&" if "?" in url else "?"
-            url += f"{separator}access_token={access_token}"
-        return url
+            headers["Authorization"] = f"Bearer {access_token}"
+        return headers
 
     def test_session(self):
         """Test if current session is valid by checking actual API access."""
@@ -34,12 +37,9 @@ class SessionMixin:
 
             for ver in api_versions:
                 url = f"https://www.aula.dk/api/v{ver}/?method=profiles.getProfilesByLogin"
-                access_token = getattr(self, "_access_token", None)
-                if access_token:
-                    url += f"&access_token={access_token}"
 
-                _LOGGER.debug(f"Testing session with: {url}")
-                response = self._session.get(url, timeout=10)
+                _LOGGER.debug("Testing session with API v%s", ver)
+                response = self._session.get(url, headers=self._auth_headers(), timeout=10)
 
                 if response.status_code == 200:
                     try:
@@ -78,6 +78,7 @@ class SessionMixin:
             if not (hasattr(self, "_profiles") and self._profiles):
                 ver = self._session.get(
                     self._get_api_url("?method=profiles.getProfilesByLogin"),
+                    headers=self._auth_headers(),
                     verify=True,
                     timeout=10,
                 )
@@ -112,6 +113,7 @@ class SessionMixin:
                     self._get_api_url(
                         "?method=profiles.getProfileContext&portalrole=guardian"
                     ),
+                    headers=self._auth_headers(),
                     verify=True,
                     timeout=10,
                 ).json()

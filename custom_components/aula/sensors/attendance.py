@@ -75,7 +75,7 @@ class AulaAttendanceSensor(Entity):
                 attributes["profile_picture"] = daily_info["institutionProfile"][
                     "profilePicture"
                 ]["url"]
-            except:
+            except (KeyError, TypeError):
                 attributes["profile_picture"] = None
 
             # Daily attendance fields
@@ -102,7 +102,7 @@ class AulaAttendanceSensor(Entity):
                         attributes[attr_name] = datetime.strptime(
                             daily_info[field], "%H:%M:%S"
                         ).strftime("%H:%M")
-                    except:
+                    except (ValueError, KeyError, TypeError):
                         attributes[attr_name] = daily_info[field]
 
         return attributes

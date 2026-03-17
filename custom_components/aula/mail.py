@@ -17,12 +17,9 @@ class MailMixin:
         try:
             _LOGGER.info("MAIL: Starting to fetch mail threads...")
 
-            # Debug current session cookies
-            current_cookies = self._session.cookies.get_dict() if self._session else {}
-            _LOGGER.info(f"MAIL: Current session cookies: {current_cookies}")
-            _LOGGER.info(
-                f"MAIL: Current profile_change: {current_cookies.get('profile_change', 'NOT_SET')}"
-            )
+            # Debug current session state (do not log cookie values)
+            has_session = self._session is not None
+            _LOGGER.debug("MAIL: Session active: %s", has_session)
 
             # Initialize mail data
             self.mail_threads = {}
@@ -36,7 +33,7 @@ class MailMixin:
                     mail_url = f"{self.apiurl}?method=messaging.getThreads&sortOn=date&orderDirection=desc&page={page}"
                     _LOGGER.debug(f"MAIL: Fetching page {page + 1} from: {mail_url}")
 
-                    response = self._session.get(mail_url, verify=True, timeout=15)
+                    response = self._session.get(mail_url, headers=self._auth_headers(), verify=True, timeout=15)
                     _LOGGER.debug(
                         f"MAIL: Page {page + 1} response status: {response.status_code}"
                     )

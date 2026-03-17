@@ -123,7 +123,7 @@ class AulaReminderSensor(Entity):
             if isinstance(reminders, list):
                 return len(reminders)
             return 0
-        except:
+        except (KeyError, IndexError, AttributeError):
             return "unavailable"
 
     @property
@@ -133,7 +133,7 @@ class AulaReminderSensor(Entity):
             attributes["huskelisten"] = self._client.huskeliste[
                 self._child["name"].split()[0]
             ]
-        except:
+        except (KeyError, IndexError, AttributeError):
             attributes["huskelisten"] = "Not available"
         return attributes
 

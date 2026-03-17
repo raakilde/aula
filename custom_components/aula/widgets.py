@@ -20,7 +20,9 @@ class WidgetsMixin:
         try:
             # Use profiles.getProfileContext to get widget configurations
             response = self._session.get(
-                self.apiurl + "?method=profiles.getProfileContext", verify=True
+                self.apiurl + "?method=profiles.getProfileContext",
+                headers=self._auth_headers(),
+                verify=True,
             )
             if response.status_code != 200:
                 _LOGGER.warning(
@@ -208,6 +210,7 @@ class WidgetsMixin:
             # Get token using current session
             response = self._session.get(
                 self.apiurl + "?method=aulaToken.getAulaToken&widgetId=" + widgetid,
+                headers=self._auth_headers(),
                 verify=True,
                 timeout=10,
             )
@@ -221,7 +224,7 @@ class WidgetsMixin:
             response_data = response.json()
             if "data" not in response_data:
                 _LOGGER.error(
-                    f"Token response missing data for widget {widgetid}: {response_data}"
+                    f"Token response missing data for widget {widgetid}"
                 )
                 raise Exception("Token response missing data")
 

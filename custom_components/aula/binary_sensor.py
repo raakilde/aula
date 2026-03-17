@@ -18,15 +18,15 @@ async def async_setup_entry(
     if client.unread_messages == 1:
         try:
             subject = client.message["subject"]
-        except:
+        except (KeyError, TypeError):
             subject = ""
         try:
             text = client.message["text"]
-        except:
+        except (KeyError, TypeError):
             text = ""
         try:
             sender = client.message["sender"]
-        except:
+        except (KeyError, TypeError):
             sender = ""
     else:
         subject = ""

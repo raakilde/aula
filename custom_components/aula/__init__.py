@@ -19,7 +19,11 @@ async def async_setup_entry(
     _LOGGER.info("Setting up Aula integration")
 
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = dict(entry.data)
+    # Only store non-sensitive config keys in hass.data — never passwords or tokens
+    _SAFE_KEYS = {"schoolschedule", "ugeplan", "auth_method", "mitid_username", "mitid_identity"}
+    hass.data[DOMAIN][entry.entry_id] = {
+        k: v for k, v in entry.data.items() if k in _SAFE_KEYS
+    }
 
     # Register options update listener
     unsub_options_update_listener = entry.add_update_listener(options_update_listener)

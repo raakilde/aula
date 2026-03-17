@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from typing import Any, Dict, Optional
 
@@ -212,8 +213,9 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
 
         if self._use_token:
-            data[CONF_MITID_PASSWORD] = self._mitid_password
-            data[CONF_MITID_TOKEN] = self._mitid_token
+            # NOTE: Do NOT persist mitid_password or mitid_token to disk.
+            # Only the OAuth refresh_token should be stored for re-authentication.
+            data[CONF_AUTH_METHOD] = AUTH_METHOD_TOKEN
 
         if self._selected_identity:
             data[CONF_MITID_IDENTITY] = self._selected_identity
@@ -254,11 +256,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
 
 class AulaAuthStatusView(HomeAssistantView):
-    """View to check MitID authentication status and display QR codes."""
+    """View to check MitID authentication status and display QR codes.
+
+    Uses HA's built-in authentication to prevent unauthenticated access.
+    """
 
     url = "/api/aula/auth/{flow_id}"
     name = "api:aula:auth"
-    requires_auth = False
+    requires_auth = True
 
     def __init__(self, hass):
         """Initialize the auth status view."""
@@ -292,7 +297,8 @@ class AulaAuthStatusView(HomeAssistantView):
         if flow._available_identities:
             identities_html = ""
             for i, name in enumerate(flow._available_identities):
-                identities_html += f'<button onclick="selectIdentity({i+1})">{name}</button><br>'
+                safe_name = html.escape(name, quote=True)
+                identities_html += f'<button onclick="selectIdentity({i+1})">{safe_name}</button><br>'
 
             return web.Response(
                 text=f"""<html><body>

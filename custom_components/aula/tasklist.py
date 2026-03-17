@@ -65,10 +65,10 @@ class TaskListData:
         events = {}
 
         try:
-            with open("uddannelseopgaveliste.json", "r") as openfile:
+            with open(self._client._data_path("uddannelseopgaveliste.json"), "r") as openfile:
                 tasks = json.load(openfile)
-        except:
-            _LOGGER.warn("Could not open and parse file uddannelseopgaveliste.json!")
+        except (OSError, json.JSONDecodeError, ValueError) as e:
+            _LOGGER.warning("Could not open and parse file uddannelseopgaveliste.json: %s", e)
             return False
         events = []
         _LOGGER.debug("Parsing skoleskema.json...")
@@ -92,8 +92,8 @@ class TaskListData:
                     end=end,
                 )
                 events.append(event)
-            except:
-                _LOGGER.warn("dd")
+            except (ValueError, TypeError) as e:
+                _LOGGER.warning("Failed to create calendar event: %s", e)
 
         return events
 

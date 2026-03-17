@@ -54,7 +54,7 @@ class PostsMixin:
                         f"POSTS: Fetching page {index // 10 + 1} from: {posts_url}"
                     )
 
-                    response = self._session.get(posts_url, verify=True, timeout=15)
+                    response = self._session.get(posts_url, headers=self._auth_headers(), verify=True, timeout=15)
                     _LOGGER.debug(
                         f"POSTS: Page {index // 10 + 1} response status: {response.status_code}"
                     )

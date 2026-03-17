@@ -13,6 +13,7 @@ This is the main orchestrator that composes functionality from:
 import datetime
 import json
 import logging
+import os
 import re
 import time
 
@@ -101,6 +102,9 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self._access_token = None
         self._hass = hass
         self._config_entry = config_entry
+
+        # Use Home Assistant config dir for data files (not CWD)
+        self._data_dir = hass.config.path() if hass else os.getcwd()
 
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
@@ -201,7 +205,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         return False
 
     def _make_api_url(self, method, **params):
-        """Build API URL with access token."""
+        """Build API URL (without token — use _auth_headers instead)."""
         url = self.apiurl + f"?method={method}"
         for key, val in params.items():
             if isinstance(val, list):
@@ -209,8 +213,18 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     url += f"&{key}[]={v}"
             else:
                 url += f"&{key}={val}"
-        url += f"&access_token={self._access_token}"
         return url
+
+    def _data_path(self, filename):
+        """Return the full path for a data file under HA config dir."""
+        return os.path.join(self._data_dir, filename)
+
+    def _auth_headers(self):
+        """Return headers with the access token as a Bearer token."""
+        headers = {}
+        if self._access_token:
+            headers["Authorization"] = f"Bearer {self._access_token}"
+        return headers
 
     def update_data(self):
         # Rate limiting: prevent multiple rapid data fetches within 30 seconds
@@ -247,6 +261,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
 
                 response = self._session.get(
                     api_url,
+                    headers=self._auth_headers(),
                     verify=True,
                     timeout=10,
                 )
@@ -322,6 +337,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 self.apiurl
                 + "?method=presence.getDailyOverview&childIds[]="
                 + str(child["id"]),
+                headers=self._auth_headers(),
                 verify=True,
             )
             data = _safe_json(response, f"presence.getDailyOverview child={child['id']}")
@@ -358,6 +374,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             mesres = self._session.get(
                 self.apiurl
                 + "?method=messaging.getThreads&sortOn=date&orderDirection=desc&page=0",
+                headers=self._auth_headers(),
                 verify=True,
             )
             _LOGGER.debug(f"OLD MESSAGES: Response status: {mesres.status_code}")
@@ -385,6 +402,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     + "?method=messaging.getMessagesForThread&threadId="
                     + str(threadid)
                     + "&page=0",
+                    headers=self._auth_headers(),
                     verify=True,
                 )
                 threaddata = _safe_json(threadres, "messaging.getMessagesForThread")
@@ -399,23 +417,23 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         if message["messageType"] == "Message":
                             try:
                                 self.message["text"] = message["text"]["html"]
-                            except:
+                            except (KeyError, TypeError):
                                 try:
                                     self.message["text"] = message["text"]
-                                except:
+                                except (KeyError, TypeError):
                                     self.message["text"] = "intet indhold..."
                                     _LOGGER.warning(
                                         "There is an unread message, but we cannot get the text."
                                     )
                             try:
                                 self.message["sender"] = message["sender"]["fullName"]
-                            except:
+                            except (KeyError, TypeError):
                                 self.message["sender"] = "Ukendt afsender"
                             try:
                                 self.message["subject"] = threaddata["data"][
                                     "subject"
                                 ]
-                            except:
+                            except (KeyError, TypeError):
                                 self.message["subject"] = ""
                             self.unread_messages = 1
                             break
@@ -429,7 +447,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         if self._schoolschedule == True:
             instProfileIds = ",".join(self._childids)
             csrf_token = self._session.cookies.get_dict().get("Csrfp-Token", "")
-            headers = {"csrfp-token": csrf_token, "content-type": "application/json"}
+            headers = {**self._auth_headers(), "csrfp-token": csrf_token, "content-type": "application/json"}
             start = datetime.datetime.now(datetime.timezone.utc).strftime(
                 "%Y-%m-%d 00:00:00.0000%z"
             )
@@ -454,12 +472,11 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 verify=True,
             )
             try:
-                with open("skoleskema.json", "w") as skoleskema_json:
+                with open(self._data_path("skoleskema.json"), "w") as skoleskema_json:
                     json.dump(res.text, skoleskema_json)
-            except:
-                _LOGGER.warn(
-                    "Got the following reply when trying to fetch calendars: "
-                    + str(res.text)
+            except (OSError, ValueError) as e:
+                _LOGGER.warning(
+                    "Failed to write skoleskema.json: %s", e
                 )
         # End of calendar
 
@@ -607,13 +624,12 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     # Currently only one student supported
                     try:
                         with open(
-                            "uddannelseopgaveliste.json", "w"
+                            self._data_path("uddannelseopgaveliste.json"), "w"
                         ) as uddannelseopgaveliste_json:
                             json.dump(opgaver, uddannelseopgaveliste_json)
-                    except:
-                        _LOGGER.warn(
-                            "Got the following reply when trying to fetch calendars: "
-                            + str(json.dumps(opgaver))
+                    except (OSError, ValueError) as e:
+                        _LOGGER.warning(
+                            "Failed to write uddannelseopgaveliste.json: %s", e
                         )
         # End of Min Uddannelse Opgave Liste
 
@@ -651,7 +667,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             self._institutionProfiles,
                             "mitid_user",
                         )
-                    except:
+                    except Exception as e:
                         self.ugenotethisweek = {}
 
                     try:
@@ -663,7 +679,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             self._institutionProfiles,
                             "mitid_user",
                         )
-                    except:
+                    except Exception as e:
                         self.ugenotenextweek = {}
 
         # End of Min Uddannelse Uge Note
@@ -673,6 +689,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             guardian = _safe_json(
                 self._session.get(
                     self.apiurl + "?method=profiles.getProfileContext&portalrole=guardian",
+                    headers=self._auth_headers(),
                     verify=True,
                 ),
                 "profiles.getProfileContext",
@@ -789,9 +806,9 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         )
                         try:
                             data = json.loads(response.text, strict=False)
-                        except:
+                        except (json.JSONDecodeError, ValueError) as e:
                             _LOGGER.error(
-                                "Could not parse the response from Huskelisten as json."
+                                "Could not parse the response from Huskelisten as json: %s", e
                             )
 
                     for person in data:
@@ -882,7 +899,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                                 ugep = ugep + "-"
                         try:
                             name = person["name"].split()[0]
-                        except:
+                        except (KeyError, IndexError, AttributeError):
                             name = person["name"]
                         if thisnext == "this":
                             self.ugep_attr[name] = ugep

@@ -181,10 +181,13 @@ class AulaAuthenticator:
         url = (
             "https://www.aula.dk/api/v22/?method=profiles.getProfileContext"
             "&portalrole=guardian"
-            f"&access_token={self.tokens['access_token']}"
         )
         try:
-            r = self._http.get(url, timeout=10)
+            r = self._http.get(
+                url,
+                headers={"Authorization": f"Bearer {self.tokens['access_token']}"},
+                timeout=10,
+            )
             return r.status_code == 200
         except Exception:
             return False
@@ -575,8 +578,8 @@ class AulaAuthenticator:
             raise TokenError("No code in callback URL")
 
         state = qs.get("state", [None])[0]
-        if state and state != self._oauth_state:
-            raise TokenError("OAuth state mismatch")
+        if not state or state != self._oauth_state:
+            raise TokenError("OAuth state mismatch or missing")
 
         try:
             r = self._http.post(
