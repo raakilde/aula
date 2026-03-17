@@ -22,20 +22,11 @@ from homeassistant.exceptions import ConfigEntryNotReady
 
 from .aula_auth import AuthMixin
 from .const import (
+    AUTH_METHOD_APP,
     CICERO_API,
     MEEBOOK_API,
     MIN_UDDANNELSE_API,
     SYSTEMATIC_API,
-    EASYIQ_API,
-    CONF_AUTH_METHOD,
-    CONF_MITID_USERNAME,
-    CONF_MITID_PASSWORD,
-    CONF_MITID_TOKEN,
-    CONF_ACCESS_TOKEN,
-    CONF_REFRESH_TOKEN,
-    CONF_TOKEN_EXPIRES_AT,
-    AUTH_METHOD_APP,
-    AUTH_METHOD_TOKEN,
 )
 from .mail import MailMixin
 from .minuddannelse import MinUddannelse
@@ -49,9 +40,7 @@ _LOGGER = logging.getLogger(__name__)
 def _safe_json(response, context="API call"):
     """Parse JSON from response, raising on non-200 status or empty body."""
     if response.status_code != 200:
-        raise Exception(
-            f"{context} returned status {response.status_code}"
-        )
+        raise Exception(f"{context} returned status {response.status_code}")
     return response.json()
 
 
@@ -151,57 +140,51 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             _LOGGER.debug("Using existing access token (valid)")
             return True
 
-        # Try to refresh the token
+        # Try to refresh the token — simple HTTP POST, no MitID needed
         if refresh_token:
             _LOGGER.debug("Access token expired, attempting refresh...")
             try:
-                from .aula_auth import AulaAuthenticator
-
-                if not self._login_client:
-                    self._login_client = AulaAuthenticator(
-                        username=self._mitid_username,
-                        password=self._mitid_password,
-                        token_code=self._mitid_token,
-                        method=self._auth_method,
-                    )
-                    self._login_client.tokens = self._stored_tokens
-
-                if self._login_client.refresh():
-                    self._stored_tokens = self._login_client.tokens
-                    self._access_token = self._login_client.access_token
-                    # Persist updated tokens
+                r = self._session.post(
+                    "https://login.aula.dk/simplesaml/module.php/oidc/token.php",
+                    data={
+                        "grant_type": "refresh_token",
+                        "refresh_token": refresh_token,
+                        "client_id": "_99949a54b8b65423862aac1bf629599ed64231607a",
+                    },
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Accept": "application/json",
+                    },
+                    timeout=30,
+                )
+                if r.status_code == 200:
+                    new = r.json()
+                    self._stored_tokens["access_token"] = new["access_token"]
+                    if "refresh_token" in new:
+                        self._stored_tokens["refresh_token"] = new["refresh_token"]
+                    if "expires_in" in new:
+                        self._stored_tokens["expires_at"] = (
+                            time.time() + new["expires_in"]
+                        )
+                    self._access_token = new["access_token"]
                     if self._token_persist_callback:
                         self._token_persist_callback(self._stored_tokens)
-                    _LOGGER.info("Access token refreshed successfully")
+                    _LOGGER.info(
+                        "Access token refreshed (expires in %ss)",
+                        new.get("expires_in", "?"),
+                    )
                     return True
                 else:
-                    _LOGGER.warning("Token refresh failed")
+                    _LOGGER.warning("Token refresh failed: HTTP %s", r.status_code)
             except Exception as e:
-                _LOGGER.error(f"Token refresh error: {e}")
+                _LOGGER.error("Token refresh error: %s", e)
 
-        # Need full re-authentication
-        _LOGGER.info("Full MitID re-authentication required")
-        try:
-            from .aula_auth import AulaAuthenticator
-
-            self._login_client = AulaAuthenticator(
-                username=self._mitid_username,
-                password=self._mitid_password,
-                token_code=self._mitid_token,
-                method=self._auth_method,
-            )
-
-            tokens = self._login_client.run()
-            if tokens and tokens.get("access_token"):
-                self._stored_tokens = tokens
-                self._access_token = self._login_client.access_token
-                if self._token_persist_callback:
-                    self._token_persist_callback(self._stored_tokens)
-                _LOGGER.info("MitID re-authentication successful")
-                return True
-        except Exception as e:
-            _LOGGER.error(f"MitID re-authentication failed: {e}")
-
+        # Full re-authentication requires user interaction (MitID app approval)
+        # and cannot be done automatically in the background.
+        _LOGGER.error(
+            "Token refresh failed — manual re-authentication required. "
+            "Please re-configure the Aula integration to log in again."
+        )
         return False
 
     def _make_api_url(self, method, **params):
@@ -250,12 +233,21 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             )
 
         # Ensure post-login setup is done
-        if not hasattr(self, "apiurl") or not hasattr(self, "_profiles") or not self._profiles:
+        if (
+            not hasattr(self, "apiurl")
+            or not hasattr(self, "_profiles")
+            or not self._profiles
+        ):
             self._setup_post_login()
 
         # Verify API access with profiles data
         is_logged_in = False
-        if self._session and hasattr(self, "apiurl") and hasattr(self, "_profiles") and self._profiles:
+        if (
+            self._session
+            and hasattr(self, "apiurl")
+            and hasattr(self, "_profiles")
+            and self._profiles
+        ):
             try:
                 api_url = self._make_api_url("profiles.getProfilesByLogin")
 
@@ -269,7 +261,9 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 is_logged_in = data.get("status", {}).get("message") == "OK"
                 if is_logged_in:
                     # Keep profiles fresh
-                    self._profiles = data.get("data", {}).get("profiles", self._profiles)
+                    self._profiles = data.get("data", {}).get(
+                        "profiles", self._profiles
+                    )
             except Exception as e:
                 _LOGGER.warning(f"Failed to test API access: {e}")
                 is_logged_in = False
@@ -340,7 +334,9 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 headers=self._auth_headers(),
                 verify=True,
             )
-            data = _safe_json(response, f"presence.getDailyOverview child={child['id']}")
+            data = _safe_json(
+                response, f"presence.getDailyOverview child={child['id']}"
+            )
             if len(data["data"]) > 0:
                 self.presence[str(child["id"])] = 1
                 self._daily_overview[str(child["id"])] = data["data"][0]
@@ -426,13 +422,16 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                                         "There is an unread message, but we cannot get the text."
                                     )
                             try:
-                                self.message["sender"] = message["sender"].get("shortName", message["sender"].get("fullName", "Ukendt afsender"))
+                                self.message["sender"] = message["sender"].get(
+                                    "shortName",
+                                    message["sender"].get(
+                                        "fullName", "Ukendt afsender"
+                                    ),
+                                )
                             except (KeyError, TypeError):
                                 self.message["sender"] = "Ukendt afsender"
                             try:
-                                self.message["subject"] = threaddata["data"][
-                                    "subject"
-                                ]
+                                self.message["subject"] = threaddata["data"]["subject"]
                             except (KeyError, TypeError):
                                 self.message["subject"] = ""
                             self.unread_messages = 1
@@ -447,7 +446,11 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         if self._schoolschedule == True:
             instProfileIds = ",".join(self._childids)
             csrf_token = self._session.cookies.get_dict().get("Csrfp-Token", "")
-            headers = {**self._auth_headers(), "csrfp-token": csrf_token, "content-type": "application/json"}
+            headers = {
+                **self._auth_headers(),
+                "csrfp-token": csrf_token,
+                "content-type": "application/json",
+            }
             start = datetime.datetime.now(datetime.timezone.utc).strftime(
                 "%Y-%m-%d 00:00:00.0000%z"
             )
@@ -477,9 +480,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 with os.fdopen(fd, "w") as skoleskema_json:
                     json.dump(res.text, skoleskema_json)
             except (OSError, ValueError) as e:
-                _LOGGER.warning(
-                    "Failed to write skoleskema.json: %s", e
-                )
+                _LOGGER.warning("Failed to write skoleskema.json: %s", e)
         # End of calendar
 
         # Bibliotek:
@@ -626,7 +627,9 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     # Currently only one student supported
                     try:
                         _path = self._data_path("uddannelseopgaveliste.json")
-                        fd = os.open(_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                        fd = os.open(
+                            _path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+                        )
                         with os.fdopen(fd, "w") as uddannelseopgaveliste_json:
                             json.dump(opgaver, uddannelseopgaveliste_json)
                     except (OSError, ValueError) as e:
@@ -669,7 +672,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             self._institutionProfiles,
                             "mitid_user",
                         )
-                    except Exception as e:
+                    except Exception:
                         self.ugenotethisweek = {}
 
                     try:
@@ -681,7 +684,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             self._institutionProfiles,
                             "mitid_user",
                         )
-                    except Exception as e:
+                    except Exception:
                         self.ugenotenextweek = {}
 
         # End of Min Uddannelse Uge Note
@@ -690,7 +693,8 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         if self._ugeplan is True:
             guardian = _safe_json(
                 self._session.get(
-                    self.apiurl + "?method=profiles.getProfileContext&portalrole=guardian",
+                    self.apiurl
+                    + "?method=profiles.getProfileContext&portalrole=guardian",
                     headers=self._auth_headers(),
                     verify=True,
                 ),
@@ -810,12 +814,16 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             data = json.loads(response.text, strict=False)
                         except (json.JSONDecodeError, ValueError) as e:
                             _LOGGER.error(
-                                "Could not parse the response from Huskelisten as json: %s", e
+                                "Could not parse the response from Huskelisten as json: %s",
+                                e,
                             )
 
                     for person in data:
                         name = person["userName"].split()[0]
-                        _LOGGER.debug("Huskelisten for child ID %s", person.get("userId", "unknown"))
+                        _LOGGER.debug(
+                            "Huskelisten for child ID %s",
+                            person.get("userId", "unknown"),
+                        )
                         huskel = ""
                         reminders = person["teamReminders"]
                         if len(reminders) > 0:
@@ -883,7 +891,10 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         data = json.loads(response.text, strict=False)
 
                     for person in data:
-                        _LOGGER.debug("Meebook ugeplan for child ID %s", person.get("id", "unknown"))
+                        _LOGGER.debug(
+                            "Meebook ugeplan for child ID %s",
+                            person.get("id", "unknown"),
+                        )
                         ugep = ""
                         ugeplan = person["weekPlan"]
                         for day in ugeplan:

@@ -146,17 +146,15 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
             # Set up identity selector callback
-            identity_future = asyncio.get_event_loop().create_future()
-            self._identity_future = identity_future
+            ha_loop = self.hass.loop
 
             def identity_selector(identities):
                 """Called when multiple identities are available."""
                 self._available_identities = identities
-                # Wait for user selection
-                loop = asyncio.get_event_loop()
+                # Wait for user selection — use captured HA loop, not get_event_loop()
                 future = asyncio.run_coroutine_threadsafe(
                     self._wait_for_identity_selection(),
-                    loop,
+                    ha_loop,
                 )
                 return future.result(timeout=120)
 

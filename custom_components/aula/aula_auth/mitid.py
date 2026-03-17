@@ -213,10 +213,9 @@ class MitIDSession:
         ticket = body["ticket"]
         _LOG.info("Waiting for MitID app approval…")
 
-        qr_thread = None
-        qr_stop = None
+        deadline = time.monotonic() + 300  # 5 minute max wait
 
-        while True:
+        while time.monotonic() < deadline:
             r = self._http.post(poll_url, json={"ticket": ticket})
             if r.status_code != 200:
                 raise IdentityProviderError("APP poll failed")
@@ -232,14 +231,13 @@ class MitIDSession:
                 self._build_qr_pair(data["channelBindingValue"], data["updateCount"])
                 continue
             if st == "channel_verified":
-                if qr_thread and qr_thread.is_alive():
-                    qr_stop.set()
-                    qr_thread.join()
                 _LOG.info("QR/OTP verified — waiting for approval")
                 continue
             if st == "OK" and data.get("confirmation"):
                 break
             raise IdentityProviderError("APP login was not accepted")
+        else:
+            raise IdentityProviderError("MitID APP godkendelse timeout efter 5 minutter")
 
         response_b64 = data["payload"]["response"]
         sig_b64 = data["payload"]["responseSignature"]

@@ -82,18 +82,21 @@ async def async_setup_entry(
         except Exception as e:
             _LOGGER.error(f"Failed to schedule token persistence: {e}")
 
+    # Read sensitive credentials from config_entry.data directly,
+    # not from hass.data which is filtered to safe keys only
+    entry_data = config_entry.data
     stored_tokens = {
-        "access_token": config.get(CONF_ACCESS_TOKEN),
-        "refresh_token": config.get(CONF_REFRESH_TOKEN),
-        "expires_at": config.get(CONF_TOKEN_EXPIRES_AT, 0),
+        "access_token": entry_data.get(CONF_ACCESS_TOKEN),
+        "refresh_token": entry_data.get(CONF_REFRESH_TOKEN),
+        "expires_at": entry_data.get(CONF_TOKEN_EXPIRES_AT, 0),
     }
     client = Client(
-        config[CONF_SCHOOLSCHEDULE],
-        config[CONF_UGEPLAN],
-        auth_method=config.get(CONF_AUTH_METHOD),
-        mitid_username=config.get(CONF_MITID_USERNAME),
-        mitid_password=config.get(CONF_MITID_PASSWORD),
-        mitid_token=config.get(CONF_MITID_TOKEN),
+        config.get(CONF_SCHOOLSCHEDULE, True),
+        config.get(CONF_UGEPLAN, True),
+        auth_method=entry_data.get(CONF_AUTH_METHOD),
+        mitid_username=entry_data.get(CONF_MITID_USERNAME),
+        mitid_password=entry_data.get(CONF_MITID_PASSWORD),
+        mitid_token=entry_data.get(CONF_MITID_TOKEN),
         stored_tokens=stored_tokens,
         token_persist_callback=persist_tokens_callback,
         hass=hass,

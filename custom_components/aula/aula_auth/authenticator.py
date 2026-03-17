@@ -21,6 +21,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from .errors import (
+    AulaAuthError,
     CredentialError,
     FlowError,
     IdentityProviderError,
@@ -30,6 +31,16 @@ from .errors import (
 from .mitid import MitIDSession
 
 _LOG = logging.getLogger(__name__)
+_DEFAULT_HTTP_TIMEOUT = 30  # seconds — prevents hung threads on network issues
+
+
+class _TimeoutSession(requests.Session):
+    """Session with a default timeout on all requests."""
+
+    def request(self, *args, **kwargs):
+        kwargs.setdefault("timeout", _DEFAULT_HTTP_TIMEOUT)
+        return super().request(*args, **kwargs)
+
 
 # ── fixed endpoints & client config ─────────────────────────────────
 _AUTH_HOST = "https://login.aula.dk"
@@ -79,7 +90,7 @@ class AulaAuthenticator:
         self._timeout = timeout
         self._identity_chooser = identity_chooser
 
-        self._http = requests.Session()
+        self._http = _TimeoutSession()
         self._http.headers.update(
             {
                 "User-Agent": _UA,
@@ -100,7 +111,10 @@ class AulaAuthenticator:
 
     # ── class-level rate limiter to prevent MitID lockout ───────────
     _last_attempt_time: float = 0
-    _MIN_ATTEMPT_INTERVAL = 30  # seconds between auth attempts
+    _MIN_ATTEMPT_INTERVAL = 60  # seconds between auth attempts
+    _fail_count: int = 0
+    _MAX_FAILURES = 1  # stop entirely after this many consecutive failures
+    _last_fail_time: float = 0
 
     # ══════════════════════════════════════════════════════════════════
     #  Top-level entry points
@@ -111,6 +125,17 @@ class AulaAuthenticator:
 
         Raises :class:`AulaAuthError` (or a subclass) on failure.
         """
+        # Reset failure counter after 30 minutes of no attempts
+        if time.time() - AulaAuthenticator._last_fail_time > 1800:
+            AulaAuthenticator._fail_count = 0
+
+        # Block if too many consecutive failures
+        if AulaAuthenticator._fail_count >= self._MAX_FAILURES:
+            raise AulaAuthError(
+                f"MitID login blokeret efter {self._MAX_FAILURES} fejlede forsøg. "
+                f"Vent mindst 30 minutter før du prøver igen."
+            )
+
         # Rate-limit to prevent MitID account lockout from rapid retries
         now = time.time()
         elapsed = now - AulaAuthenticator._last_attempt_time
@@ -123,14 +148,21 @@ class AulaAuthenticator:
         AulaAuthenticator._last_attempt_time = time.time()
 
         _LOG.info("Starting Aula authentication flow")
-        redirect = self._begin_oauth()
-        vt, mitid_url = self._navigate_to_mitid(redirect)
-        auth_code = self._perform_mitid_auth(vt)
-        self.mitid_session = None  # clear after auth to stop QR exposure
-        saml = self._complete_mitid(vt, auth_code)
-        broker_saml = self._broker_flow(saml)
-        callback = self._submit_aula_saml(broker_saml)
-        self.tokens = self._exchange_code(callback)
+        try:
+            redirect = self._begin_oauth()
+            vt, mitid_url = self._navigate_to_mitid(redirect)
+            auth_code = self._perform_mitid_auth(vt)
+            self.mitid_session = None  # clear after auth to stop QR exposure
+            saml = self._complete_mitid(vt, auth_code)
+            broker_saml = self._broker_flow(saml)
+            callback = self._submit_aula_saml(broker_saml)
+            self.tokens = self._exchange_code(callback)
+        except Exception:
+            AulaAuthenticator._fail_count += 1
+            AulaAuthenticator._last_fail_time = time.time()
+            _LOG.warning("MitID auth failed (attempt %d/%d)", AulaAuthenticator._fail_count, self._MAX_FAILURES)
+            raise
+        AulaAuthenticator._fail_count = 0
         _LOG.info("Authentication completed successfully")
         return self.tokens
 
