@@ -79,6 +79,7 @@ class AulaAttendanceSensor(Entity):
                 attributes["profile_picture"] = None
 
             # Daily attendance fields
+            # NOTE: exit_with and comment may contain sensitive personal information
             field_mapping = {
                 "location": "location",
                 "sleepIntervals": "sleep_intervals",

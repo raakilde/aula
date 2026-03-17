@@ -22,7 +22,7 @@ class AulaLibrarySensor(Entity):
         """Find loaned books for this child, handling name mismatches between Aula and CICERO.
 
         The CICERO API keys books by patronDisplayName which may differ from the
-        Aula child name (e.g. 'Aksel' vs 'Aksel Surname'). This method tries:
+        Aula child name (e.g. first name only vs full name). This method tries:
         1. Exact match on child["name"]
         2. Match on the childnames lookup (full name from profile)
         3. Partial match: patronDisplayName contains or is contained in child name

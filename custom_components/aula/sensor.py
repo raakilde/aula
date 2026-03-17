@@ -145,17 +145,17 @@ async def async_setup_entry(
         # Create for school-type children; skip for kindergartens
         if institution_type != "kindergarten":
             _LOGGER.debug(
-                f"Creating library sensor for {child_name} (institution: {institution_type}, "
+                f"Creating library sensor for child {child_id} (institution: {institution_type}, "
                 f"widget 0019 in available_widgets: {'0019' in available_widgets})"
             )
             entities.append(AulaLibrarySensor(hass, coordinator, child))
         else:
-            _LOGGER.debug(f"Library sensor for {child_name} skipped - kindergarten")
+            _LOGGER.debug(f"Library sensor for child {child_id} skipped - kindergarten")
 
         if client.presence[child_id] == 1:
             if child_id in client._daily_overview:
                 _LOGGER.debug(
-                    f"Found presence data for {child_name} (childid {child_id}) at {institution_type} - adding sensor entities."
+                    f"Found presence data for child {child_id} at {institution_type} - adding sensor entities."
                 )
 
                 # Main attendance/presence sensor - always available
@@ -181,7 +181,7 @@ async def async_setup_entry(
                         else f"not appropriate for {institution_type}"
                     )
                     _LOGGER.info(
-                        f"Education sensor for {child_name} skipped - {reason}"
+                        f"Education sensor for child {child_id} skipped - {reason}"
                     )
 
                 # Week notes sensors - check widget availability and institution appropriateness
@@ -204,7 +204,7 @@ async def async_setup_entry(
                         else f"not appropriate for {institution_type}"
                     )
                     _LOGGER.info(
-                        f"Week notes sensor for {child_name} skipped - {reason}"
+                        f"Week notes sensor for child {child_id} skipped - {reason}"
                     )
 
                 # Week plan sensors - always available for all institution types
@@ -225,7 +225,7 @@ async def async_setup_entry(
                             else f"not appropriate for {institution_type}"
                         )
                         _LOGGER.info(
-                            f"Reminder sensor for {child_name} skipped - {reason}"
+                            f"Reminder sensor for child {child_id} skipped - {reason}"
                         )
 
                 # Weekly Schedule sensor (presence templates) - available for all institution types

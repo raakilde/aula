@@ -33,7 +33,9 @@ class MailMixin:
                     mail_url = f"{self.apiurl}?method=messaging.getThreads&sortOn=date&orderDirection=desc&page={page}"
                     _LOGGER.debug(f"MAIL: Fetching page {page + 1} from: {mail_url}")
 
-                    response = self._session.get(mail_url, headers=self._auth_headers(), verify=True, timeout=15)
+                    response = self._session.get(
+                        mail_url, headers=self._auth_headers(), verify=True, timeout=15
+                    )
                     _LOGGER.debug(
                         f"MAIL: Page {page + 1} response status: {response.status_code}"
                     )
@@ -188,7 +190,7 @@ class MailMixin:
                     if child_name.strip() == display_name.strip():
                         self.mail_child_profile_mapping[child_id_str] = profile_id
                         _LOGGER.debug(
-                            f"MAIL: Mapped sensor child ID {child_id_str} ({child_name}) to profile ID {profile_id} ({display_name})"
+                            f"MAIL: Mapped sensor child ID {child_id_str} to profile ID {profile_id}"
                         )
                         break
 

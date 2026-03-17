@@ -345,10 +345,9 @@ class PresenceMixin:
                         for i, template in enumerate(templates):
                             institution_profile = template.get("institutionProfile", {})
                             child_id = institution_profile.get("id")
-                            child_name = institution_profile.get("name", "Unknown")
                             day_templates = template.get("dayTemplates", [])
                             _LOGGER.debug(
-                                f"Template {i}: Child {child_name} (ID: {child_id}) - {len(day_templates)} days"
+                                f"Template {i}: Child ID {child_id} - {len(day_templates)} days"
                             )
                     else:
                         _LOGGER.warning("No presenceWeekTemplates in API response")
@@ -399,11 +398,11 @@ class PresenceMixin:
                     institution_code = institution_profile.get("institutionCode", "")
 
                     _LOGGER.debug(
-                        f"PARSING: Processing child {child_name} (ID: {child_id})"
+                        f"PARSING: Processing child ID {child_id}"
                     )
 
                     if not child_id:
-                        _LOGGER.warning(f"PARSING: No child_id found for {child_name}")
+                        _LOGGER.warning(f"PARSING: No child_id found in template")
                         continue
 
                     # Initialize child data
@@ -413,7 +412,7 @@ class PresenceMixin:
                     # Process day templates
                     day_templates = template.get("dayTemplates", [])
                     _LOGGER.debug(
-                        f"PARSING: Processing {len(day_templates)} day templates for {child_name}"
+                        f"PARSING: Processing {len(day_templates)} day templates for child ID {child_id}"
                     )
 
                     for day_template in day_templates:

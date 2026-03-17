@@ -107,7 +107,6 @@ class AulaWeeklyPresenceSensor(Entity):
                     "exit_with": day_data.get("exit_with"),
                     "status": day_data.get("status"),
                     "comment": day_data.get("comment"),
-                    "institution": day_data.get("institution_name"),
                     "group": day_data.get("main_group"),
                 }
                 daily_data[date] = daily_info
@@ -254,7 +253,6 @@ class AulaWeeklyPresenceNextSensor(Entity):
                     "exit_with": day_data.get("exit_with"),
                     "status": day_data.get("status"),
                     "comment": day_data.get("comment"),
-                    "institution": day_data.get("institution_name"),
                     "group": day_data.get("main_group"),
                 }
                 daily_data[date] = daily_info

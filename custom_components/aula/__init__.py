@@ -4,6 +4,7 @@ Based on https://github.com/JBoye/HA-Aula
 
 import asyncio
 import logging
+import os
 
 from homeassistant import config_entries, core
 
@@ -19,8 +20,8 @@ async def async_setup_entry(
     _LOGGER.info("Setting up Aula integration")
 
     hass.data.setdefault(DOMAIN, {})
-    # Only store non-sensitive config keys in hass.data — never passwords or tokens
-    _SAFE_KEYS = {"schoolschedule", "ugeplan", "auth_method", "mitid_username", "mitid_identity"}
+    # Only store non-sensitive config keys in hass.data — never passwords, tokens, or usernames
+    _SAFE_KEYS = {"schoolschedule", "ugeplan", "auth_method", "mitid_identity"}
     hass.data[DOMAIN][entry.entry_id] = {
         k: v for k, v in entry.data.items() if k in _SAFE_KEYS
     }
@@ -54,6 +55,18 @@ async def async_unload_entry(
             *[hass.config_entries.async_forward_entry_unload(entry, "sensor")]
         )
     )
+
+    # Clean up cached data files containing personal information
+    config_dir = hass.config.path()
+    for filename in ("skoleskema.json", "uddannelseopgaveliste.json"):
+        filepath = os.path.join(config_dir, filename)
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+                _LOGGER.debug("Removed cached data file: %s", filename)
+        except OSError as e:
+            _LOGGER.warning("Failed to remove cached data file %s: %s", filename, e)
+
     # Remove options_update_listener if it exists.
     if "unsub_options_update_listener" in hass.data[DOMAIN][entry.entry_id]:
         hass.data[DOMAIN][entry.entry_id]["unsub_options_update_listener"]()
