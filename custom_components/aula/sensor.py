@@ -10,7 +10,13 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .client import Client
 from .const import (
-    CONF_AUTH_COOKIES,
+    CONF_AUTH_METHOD,
+    CONF_MITID_USERNAME,
+    CONF_MITID_PASSWORD,
+    CONF_MITID_TOKEN,
+    CONF_ACCESS_TOKEN,
+    CONF_REFRESH_TOKEN,
+    CONF_TOKEN_EXPIRES_AT,
     CONF_SCHOOLSCHEDULE,
     CONF_UGEPLAN,
     DOMAIN,
@@ -52,38 +58,46 @@ async def async_setup_entry(
 
     ugeplan = config.get(CONF_UGEPLAN, True)
 
-    # Create callback for persisting updated cookies
-    def persist_cookies_callback(updated_cookies):
-        """Callback to persist updated cookies to config entry.
-
-        This may be called from a SyncWorker thread, so we schedule the
-        async_update_entry call on the event loop to avoid thread-safety
-        issues.
-        """
+    # Create callback for persisting updated tokens
+    def persist_tokens_callback(updated_tokens):
+        """Callback to persist updated tokens to config entry."""
         try:
-            _LOGGER.info("Persisting auto-synced cookies to config entry")
+            _LOGGER.info("Persisting updated tokens to config entry")
 
             def _do_update():
                 try:
                     new_data = dict(config_entry.data)
-                    new_data[CONF_AUTH_COOKIES] = updated_cookies
+                    new_data[CONF_ACCESS_TOKEN] = updated_tokens.get("access_token")
+                    new_data[CONF_REFRESH_TOKEN] = updated_tokens.get("refresh_token")
+                    new_data[CONF_TOKEN_EXPIRES_AT] = updated_tokens.get("expires_at", 0)
                     hass.config_entries.async_update_entry(
                         config_entry,
                         data=new_data,
                     )
-                    _LOGGER.debug("Successfully persisted auto-synced cookies")
+                    _LOGGER.debug("Successfully persisted updated tokens")
                 except Exception as exc:
-                    _LOGGER.error(f"Failed to persist updated cookies: {exc}")
+                    _LOGGER.error(f"Failed to persist updated tokens: {exc}")
 
             hass.loop.call_soon_threadsafe(_do_update)
         except Exception as e:
-            _LOGGER.error(f"Failed to schedule cookie persistence: {e}")
+            _LOGGER.error(f"Failed to schedule token persistence: {e}")
 
+    stored_tokens = {
+        "access_token": config.get(CONF_ACCESS_TOKEN),
+        "refresh_token": config.get(CONF_REFRESH_TOKEN),
+        "expires_at": config.get(CONF_TOKEN_EXPIRES_AT, 0),
+    }
     client = Client(
         config[CONF_SCHOOLSCHEDULE],
         config[CONF_UGEPLAN],
-        config.get(CONF_AUTH_COOKIES, {}),
-        cookie_persist_callback=persist_cookies_callback,
+        auth_method=config.get(CONF_AUTH_METHOD),
+        mitid_username=config.get(CONF_MITID_USERNAME),
+        mitid_password=config.get(CONF_MITID_PASSWORD),
+        mitid_token=config.get(CONF_MITID_TOKEN),
+        stored_tokens=stored_tokens,
+        token_persist_callback=persist_tokens_callback,
+        hass=hass,
+        config_entry=config_entry,
     )
 
     hass.data[DOMAIN]["client"] = client

@@ -3,37 +3,45 @@
     "error": {
       "1": "Unknown error",
       "2": "Unknown error",
-      "cookies_required": "Please provide session cookies from your browser",
-      "invalid_cookies": "The provided cookies are invalid or expired",
-      "invalid_json": "Invalid JSON format. Please provide cookies as JSON",
-      "validation_failed": "Authentication validation failed. Please try again"
+      "auth_failed": "MitID authentication failed. Please try again."
     },
     "step": {
       "user": {
+        "title": "Aula Setup",
+        "description": "Enter your MitID username to begin authentication.",
         "data": {
-          "session_cookies": "Session cookies from browser",
+          "mitid_username": "MitID Username",
+          "mitid_use_token": "Use TOKEN authentication (instead of APP)",
           "schoolschedule": "Add school schedules as calendar entities?",
           "ugeplan": "Add ugeplaner as sensor attributes?"
-        },
-        "description": "Provide session cookies from your browser after logging into aula.dk with MitID. API tokens are fetched automatically - you only need cookies. Other features (library, education modules) are auto-detected from your account.",
-        "title": "Aula Setup"
+        }
+      },
+      "token_credentials": {
+        "title": "MitID Token Credentials",
+        "description": "Enter your MitID password and token code for TOKEN authentication.",
+        "data": {
+          "mitid_password": "MitID Password",
+          "mitid_token": "MitID Token Code"
+        }
+      },
+      "authenticate": {
+        "title": "MitID Authentication",
+        "description": "Approve the login request in your MitID app..."
       }
+    },
+    "abort": {
+      "auth_failed": "MitID authentication failed. Please try again."
     }
   },
   "options": {
     "step": {
-      "init": {
-        "data": {
-          "session_cookies": "Fresh Session Cookies (JSON format)"
-        },
-        "description": "**Update your expired session cookies**\\n\\n{instructions}\\n\\n**Current cookies:** {current_cookies}",
-        "title": "Update Aula Authentication"
+      "reauth": {
+        "title": "Re-authenticate",
+        "description": "Re-authenticate with MitID for user {username}."
       }
     },
     "error": {
-      "invalid_json": "Invalid JSON format. Please provide cookies as valid JSON.",
-      "update_failed": "Failed to update cookies. Please try again.",
-      "base": "Unknown error occurred."
+      "update_failed": "Failed to update. Please try again."
     }
   },
   "entity": {

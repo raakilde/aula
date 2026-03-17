@@ -15,20 +15,7 @@
                 "/config"
             ],
             "justMyCode": false,
-            "console": "internalConsole",
-            "cwd": "/workspaces/aula",
-            "env": {
-                "PYTHONPATH": "/workspaces/aula:/workspaces/aula/custom_components"
-            }
-        },
-        {
-            "name": "Python: Current File",
-            "type": "python",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "justMyCode": false,
-            "cwd": "${workspaceFolder}"
+            "console": "internalConsole"
         }
     ]
 }

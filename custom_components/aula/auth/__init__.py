@@ -1,6 +1,6 @@
 """
 Authentication management for Aula integration.
-Session management, cookie persistence, and API setup.
+Session management and API setup using MitID OAuth tokens.
 """
 
 from .session import SessionMixin

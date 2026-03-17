@@ -3,46 +3,55 @@
     "error": {
       "1": "Unknown error",
       "2": "Unknown error",
-      "invalid_json": "Invalid cookie format. Use browser string format or valid JSON.",
-      "missing_cookies": "Missing required cookies. Ensure PHPSESSID and Csrfp-Token are included.",
-      "auth_failed": "Authentication failed. Please check your cookies and try again."
+      "auth_failed": "MitID authentication failed. Please try again."
     },
     "step": {
       "user": {
+        "title": "Aula Setup",
+        "description": "Enter your MitID username to begin authentication.",
         "data": {
-          "session_cookies": "Session cookies from browser",
+          "mitid_username": "MitID Username",
+          "mitid_use_token": "Use TOKEN authentication (instead of APP)",
           "schoolschedule": "Add school schedules as calendar entities?",
           "ugeplan": "Add ugeplaner as sensor attributes?"
-        },
-        "description": "Setup your Aula integration by providing session cookies and selecting features. API tokens are fetched automatically - you only need cookies. Other features are auto-detected from your account.",
-        "title": "Aula Setup"
+        }
       },
-      "options": {
+      "token_credentials": {
+        "title": "MitID Token Credentials",
+        "description": "Enter your MitID username. For APP auth, you will need to approve on your phone. For TOKEN auth, enable the token option.",
         "data": {
+          "mitid_username": "MitID Username",
+          "mitid_use_token": "Use TOKEN authentication (instead of APP)",
           "schoolschedule": "Add school schedules as calendar entities?",
           "ugeplan": "Add ugeplaner as sensor attributes?"
-        },
-        "description": "Update configuration options. Note: Other features (library, education modules) are auto-detected and cannot be manually disabled.",
-        "title": "Options"
+        }
+      },
+      "token_credentials": {
+        "title": "MitID Token Credentials",
+        "description": "Enter your MitID password and token code for TOKEN authentication.",
+        "data": {
+          "mitid_password": "MitID Password",
+          "mitid_token": "MitID Token Code"
+        }
+      },
+      "authenticate": {
+        "title": "MitID Authentication",
+        "description": "Approve the login request in your MitID app..."
       }
+    },
+    "abort": {
+      "auth_failed": "MitID authentication failed. Please try again."
     }
   },
   "options": {
     "error": {
-      "1": "Unknown error"
+      "1": "Unknown error",
+      "update_failed": "Failed to update. Please try again."
     },
     "step": {
-      "options": {
-        "data": {
-          "schoolschedule": "Add school schedules as calendar entities?",
-          "ugeplan": "Add ugeplaner as sensor attributes?",
-          "bibliotek": "Add bibliotek as sensor attributes?",
-          "minUddannelseForloeb": "Add min uddannelse forløb as sensor attributes?",
-          "minUddannelseOpgaveListe": "Add min uddannelse opgave liste as sensor attributes?",
-          "minUddannelseUgeNote": "Add min uddannelse uge note as sensor attributes?"
-        },
-        "description": "",
-        "title": "Options"
+      "reauth": {
+        "title": "Re-authenticate",
+        "description": "Re-authenticate with MitID for user {username}."
       }
     }
   }

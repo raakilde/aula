@@ -8,9 +8,6 @@ cd "$(dirname "$0")/.."
 python3 -m pip install --upgrade pip
 pip3 install -r requirements_test.txt
 
-# Install Chrome and ChromeDriver for Selenium (MitID login)
-apt-get update && apt-get install -y chromium chromium-driver || echo "Could not install Chromium (may need sudo)"
-
 # Create symlink to custom_components
 mkdir -p .haconfig/custom_components
 ln -sf "$(pwd)/custom_components/aula" .haconfig/custom_components/aula

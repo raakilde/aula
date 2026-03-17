@@ -3,38 +3,45 @@
     "error": {
       "1": "Ukendt fejl",
       "2": "Ukendt fejl",
-      "missing_cookies": "Mangler påkrævede cookies. Sørg for at PHPSESSID og Csrfp-Token er inkluderet.",
-      "cookies_required": "Angiv venligst session cookies fra din browser",
-      "invalid_cookies": "De angivne cookies er ugyldige eller udløbet",
-      "invalid_json": "Ugyldigt JSON format. Angiv cookies som JSON",
-      "validation_failed": "Godkendelse mislykkedes. Prøv igen"
+      "auth_failed": "MitID godkendelse mislykkedes. Prøv igen."
     },
     "step": {
       "user": {
+        "title": "Aula Opsætning",
+        "description": "Indtast dit MitID brugernavn for at starte godkendelse.",
         "data": {
-          "session_cookies": "Session cookies fra browser",
+          "mitid_username": "MitID Brugernavn",
+          "mitid_use_token": "Brug TOKEN godkendelse (i stedet for APP)",
           "schoolschedule": "Tilføj skoleskemaer som kalender entiteter?",
           "ugeplan": "Tilføj ugeplaner som sensor attributter?"
-        },
-        "description": "Angiv session cookies fra din browser efter login på aula.dk med MitID. API tokens hentes automatisk - du behøver kun cookies. Andre funktioner (bibliotek, undervisningsmoduler) opdages automatisk fra din konto.",
-        "title": "Aula Opsætning"
+        }
+      },
+      "token_credentials": {
+        "title": "MitID Token Legitimationsoplysninger",
+        "description": "Indtast dit MitID password og token-kode for TOKEN godkendelse.",
+        "data": {
+          "mitid_password": "MitID Password",
+          "mitid_token": "MitID Token Kode"
+        }
+      },
+      "authenticate": {
+        "title": "MitID Godkendelse",
+        "description": "Godkend login forespørgslen i din MitID app..."
       }
+    },
+    "abort": {
+      "auth_failed": "MitID godkendelse mislykkedes. Prøv igen."
     }
   },
   "options": {
     "step": {
-      "init": {
-        "data": {
-          "session_cookies": "Friske Session Cookies (JSON format)"
-        },
-        "description": "**Opdater dine udløbne session cookies**\\n\\n{instructions}\\n\\n**Nuværende cookies:** {current_cookies}",
-        "title": "Opdater Aula Godkendelse"
+      "reauth": {
+        "title": "Gengodkend",
+        "description": "Gengodkend med MitID for bruger {username}."
       }
     },
     "error": {
-      "invalid_json": "Ugyldigt JSON format. Angiv cookies som gyldigt JSON.",
-      "update_failed": "Kunne ikke opdatere cookies. Prøv igen.",
-      "base": "Ukendt fejl opstod."
+      "update_failed": "Kunne ikke opdatere. Prøv igen."
     }
   },
   "entity": {

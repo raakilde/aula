@@ -35,20 +35,3 @@ def mock_aula_client():
         yield client_instance
 
 
-@pytest.fixture
-def mock_selenium():
-    """Mock Selenium webdriver for testing without actual browser."""
-    with patch("custom_components.aula.client.webdriver") as mock_webdriver:
-        mock_driver = MagicMock()
-        mock_webdriver.Chrome.return_value = mock_driver
-        
-        # Mock driver methods
-        mock_driver.get = MagicMock()
-        mock_driver.find_element = MagicMock()
-        mock_driver.get_cookies = MagicMock(return_value=[
-            {"name": "session", "value": "test_session", "domain": "aula.dk"}
-        ])
-        mock_driver.quit = MagicMock()
-        mock_driver.current_url = "https://www.aula.dk:443/portal/"
-        
-        yield mock_driver

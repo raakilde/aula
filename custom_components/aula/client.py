@@ -25,6 +25,16 @@ from .const import (
     MEEBOOK_API,
     MIN_UDDANNELSE_API,
     SYSTEMATIC_API,
+    EASYIQ_API,
+    CONF_AUTH_METHOD,
+    CONF_MITID_USERNAME,
+    CONF_MITID_PASSWORD,
+    CONF_MITID_TOKEN,
+    CONF_ACCESS_TOKEN,
+    CONF_REFRESH_TOKEN,
+    CONF_TOKEN_EXPIRES_AT,
+    AUTH_METHOD_APP,
+    AUTH_METHOD_TOKEN,
 )
 from .mail import MailMixin
 from .minuddannelse import MinUddannelse
@@ -68,18 +78,30 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self,
         schoolschedule,
         ugeplan,
-        auth_cookies=None,
-        cookie_persist_callback=None,
+        auth_method=None,
+        mitid_username=None,
+        mitid_password=None,
+        mitid_token=None,
+        stored_tokens=None,
+        token_persist_callback=None,
+        hass=None,
+        config_entry=None,
     ):
         self._session = None
-        self._auth_cookies = auth_cookies or {}
-        self._cookie_persist_callback = cookie_persist_callback
-        self._last_session_test = 0  # Rate limiting for session tests
-        self._last_data_update = 0  # Rate limiting for data updates
-        self._last_profile_change_increment = None  # Track when profile_change was last incremented based on session token
-        self._session_token_time = None  # Track session token initialization time
-        self._session_valid = False  # Track actual session validity
-        self._session_created_time = None  # Track when session was first established
+        self._last_data_update = 0
+
+        # MitID token-based auth fields
+        self._auth_method = auth_method or AUTH_METHOD_APP
+        self._mitid_username = mitid_username
+        self._mitid_password = mitid_password
+        self._mitid_token = mitid_token
+        self._stored_tokens = stored_tokens or {}
+        self._token_persist_callback = token_persist_callback
+        self._login_client = None
+        self._access_token = None
+        self._hass = hass
+        self._config_entry = config_entry
+
         self._schoolschedule = schoolschedule
         self._ugeplan = ugeplan
         # Widget-based features now auto-detected from API
@@ -103,6 +125,93 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self._institutionProfileIdsList = []
         self._daily_overview = {}
 
+    def _ensure_token_auth(self):
+        """Ensure we have a valid access token (MitID auth method)."""
+        if not self._session:
+            self._session = requests.Session()
+            self._session.headers.update(
+                {
+                    "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/113.0.0.0 Mobile Safari/537.36",
+                    "Accept": "application/json",
+                }
+            )
+
+        # Check if we have stored tokens
+        access_token = self._stored_tokens.get("access_token")
+        refresh_token = self._stored_tokens.get("refresh_token")
+        expires_at = self._stored_tokens.get("expires_at", 0)
+
+        if access_token and time.time() < expires_at - 300:
+            # Token still valid (with 5 min buffer)
+            self._access_token = access_token
+            _LOGGER.debug("Using existing access token (valid)")
+            return True
+
+        # Try to refresh the token
+        if refresh_token:
+            _LOGGER.debug("Access token expired, attempting refresh...")
+            try:
+                from .aula_auth import AulaAuthenticator
+
+                if not self._login_client:
+                    self._login_client = AulaAuthenticator(
+                        username=self._mitid_username,
+                        password=self._mitid_password,
+                        token_code=self._mitid_token,
+                        method=self._auth_method,
+                    )
+                    self._login_client.tokens = self._stored_tokens
+
+                if self._login_client.refresh():
+                    self._stored_tokens = self._login_client.tokens
+                    self._access_token = self._login_client.access_token
+                    # Persist updated tokens
+                    if self._token_persist_callback:
+                        self._token_persist_callback(self._stored_tokens)
+                    _LOGGER.info("Access token refreshed successfully")
+                    return True
+                else:
+                    _LOGGER.warning("Token refresh failed")
+            except Exception as e:
+                _LOGGER.error(f"Token refresh error: {e}")
+
+        # Need full re-authentication
+        _LOGGER.info("Full MitID re-authentication required")
+        try:
+            from .aula_auth import AulaAuthenticator
+
+            self._login_client = AulaAuthenticator(
+                username=self._mitid_username,
+                password=self._mitid_password,
+                token_code=self._mitid_token,
+                method=self._auth_method,
+            )
+
+            tokens = self._login_client.run()
+            if tokens and tokens.get("access_token"):
+                self._stored_tokens = tokens
+                self._access_token = self._login_client.access_token
+                if self._token_persist_callback:
+                    self._token_persist_callback(self._stored_tokens)
+                _LOGGER.info("MitID re-authentication successful")
+                return True
+        except Exception as e:
+            _LOGGER.error(f"MitID re-authentication failed: {e}")
+
+        return False
+
+    def _make_api_url(self, method, **params):
+        """Build API URL with access token."""
+        url = self.apiurl + f"?method={method}"
+        for key, val in params.items():
+            if isinstance(val, list):
+                for v in val:
+                    url += f"&{key}[]={v}"
+            else:
+                url += f"&{key}={val}"
+        url += f"&access_token={self._access_token}"
+        return url
+
     def update_data(self):
         # Rate limiting: prevent multiple rapid data fetches within 30 seconds
         current_time = time.time()
@@ -118,40 +227,13 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         # Clear cached widget tokens so they are re-fetched fresh each cycle
         self.tokens = {}
 
-        # Reuse existing session if still valid (avoids destroying server-set cookies)
-        have_valid_session = False
-        if self._session and getattr(self, "_session_valid", False):
-            # Auto-increment profile_change on existing session
-            self._auto_increment_profile_change()
-            # If keep-alive detected session expiry, skip test and go to recovery
-            if not getattr(self, "_session_valid", False):
-                _LOGGER.debug("Keep-alive detected expired session, skipping test")
-            else:
-                # Validate session (rate-limited to every 5 minutes)
-                have_valid_session = self.test_session()
+        # Ensure we have a valid access token
+        have_valid_session = self._ensure_token_auth()
 
         if not have_valid_session:
-            # Need to (re)initialize session from stored cookies
-            if not self._auth_cookies:
-                raise ConfigEntryNotReady(
-                    "No authentication cookies available. Please reconfigure the integration."
-                )
-
-            # Reset rate limiter so test_session does a real check
-            # (it may have been set moments ago by a failed keep-alive)
-            self._last_session_test = 0
-
-            if self.init_session_with_cookies() and self.test_session():
-                _LOGGER.debug("Session initialized from stored cookies")
-            else:
-                _LOGGER.debug("Need to authenticate - cookies invalid or missing")
-                try:
-                    self.login(show_browser=False)
-                except Exception as e:
-                    _LOGGER.error(f"Re-authentication failed: {e}")
-                    raise ConfigEntryNotReady(
-                        "Authentication session expired. Please reconfigure the integration."
-                    )
+            raise ConfigEntryNotReady(
+                "Authentication failed. Please reconfigure the integration."
+            )
 
         # Ensure post-login setup is done
         if not hasattr(self, "apiurl") or not hasattr(self, "_profiles") or not self._profiles:
@@ -161,13 +243,13 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         is_logged_in = False
         if self._session and hasattr(self, "apiurl") and hasattr(self, "_profiles") and self._profiles:
             try:
-                self._increment_profile_change()
+                api_url = self._make_api_url("profiles.getProfilesByLogin")
+
                 response = self._session.get(
-                    self.apiurl + "?method=profiles.getProfilesByLogin",
+                    api_url,
                     verify=True,
                     timeout=10,
                 )
-                self._increment_profile_change()
                 data = _safe_json(response, "profiles.getProfilesByLogin")
                 is_logged_in = data.get("status", {}).get("message") == "OK"
                 if is_logged_in:
@@ -181,10 +263,8 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
 
         if not is_logged_in:
             _LOGGER.error("API access test failed - authentication may have expired")
-            # Invalidate session so next retry does a real check
-            self._invalidate_session()
             raise ConfigEntryNotReady(
-                "API access denied. Please reconfigure the integration with fresh cookies."
+                "API access denied. Please reconfigure the integration."
             )
 
         self._childnames = {}
@@ -348,7 +428,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         # Calendar:
         if self._schoolschedule == True:
             instProfileIds = ",".join(self._childids)
-            csrf_token = self._session.cookies.get_dict()["Csrfp-Token"]
+            csrf_token = self._session.cookies.get_dict().get("Csrfp-Token", "")
             headers = {"csrfp-token": csrf_token, "content-type": "application/json"}
             start = datetime.datetime.now(datetime.timezone.utc).strftime(
                 "%Y-%m-%d 00:00:00.0000%z"
@@ -839,7 +919,3 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             # Initialize empty mail data on error
             self.mail_threads = {}
             self.mail_by_child = {}
-
-        # Persist cookies (with updated profile_change) so they survive HA restarts
-        self._sync_cookies_from_session()
-        self._persist_updated_cookies()

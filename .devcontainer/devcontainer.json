@@ -17,10 +17,6 @@
       "onAutoForward": "notify"
     }
   },
-  "runArgs": [
-    "--dns=8.8.8.8",
-    "--dns=1.1.1.1"
-  ],
   "customizations": {
     "vscode": {
       "settings": {
