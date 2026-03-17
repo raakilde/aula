@@ -8,20 +8,20 @@ from homeassistant import config_entries
 from homeassistant.components.http import HomeAssistantView
 
 from .const import (
-    DOMAIN,
+    AUTH_METHOD_APP,
+    AUTH_METHOD_TOKEN,
+    CONF_ACCESS_TOKEN,
     CONF_AUTH_METHOD,
-    CONF_MITID_USERNAME,
+    CONF_MITID_IDENTITY,
     CONF_MITID_PASSWORD,
     CONF_MITID_TOKEN,
     CONF_MITID_USE_TOKEN,
-    CONF_MITID_IDENTITY,
-    CONF_SCHOOLSCHEDULE,
-    CONF_UGEPLAN,
-    CONF_ACCESS_TOKEN,
+    CONF_MITID_USERNAME,
     CONF_REFRESH_TOKEN,
+    CONF_SCHOOLSCHEDULE,
     CONF_TOKEN_EXPIRES_AT,
-    AUTH_METHOD_APP,
-    AUTH_METHOD_TOKEN,
+    CONF_UGEPLAN,
+    DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -115,9 +115,7 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Register the auth status view if not already registered
         try:
-            self.hass.http.register_view(
-                AulaAuthStatusView(self.hass)
-            )
+            self.hass.http.register_view(AulaAuthStatusView(self.hass))
         except Exception:
             pass  # View might already be registered
 
@@ -165,9 +163,7 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._auth_client._identity_chooser = identity_selector
 
             # Run authentication in executor (blocking I/O)
-            result = await self.hass.async_add_executor_job(
-                self._auth_client.run
-            )
+            result = await self.hass.async_add_executor_job(self._auth_client.run)
 
             self._auth_result = result
             _LOGGER.info("MitID authentication completed successfully")
@@ -176,12 +172,12 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.error(f"MitID authentication failed: {e}")
             self._auth_error = str(e)
 
-        # Signal external step completion
-        self.hass.async_create_task(
-            self.hass.config_entries.flow.async_configure(
-                flow_id=self.flow_id
+        # Signal external step completion (only once)
+        if not getattr(self, "_completion_signalled", False):
+            self._completion_signalled = True
+            self.hass.async_create_task(
+                self.hass.config_entries.flow.async_configure(flow_id=self.flow_id)
             )
-        )
 
     async def _wait_for_identity_selection(self):
         """Wait for user to select an identity (called from auth thread)."""
@@ -258,12 +254,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 class AulaAuthStatusView(HomeAssistantView):
     """View to check MitID authentication status and display QR codes.
 
-    Uses HA's built-in authentication to prevent unauthenticated access.
+    This endpoint must be unauthenticated (requires_auth = False) because
+    the user's browser accesses it during the MitID login redirect flow,
+    where no HA auth token is available. The flow_id in the URL serves as
+    a short-lived, unguessable token to prevent unauthorized access.
     """
 
     url = "/api/aula/auth/{flow_id}"
     name = "api:aula:auth"
-    requires_auth = True
+    requires_auth = False
 
     def __init__(self, hass):
         """Initialize the auth status view."""
@@ -298,7 +297,7 @@ class AulaAuthStatusView(HomeAssistantView):
             identities_html = ""
             for i, name in enumerate(flow._available_identities):
                 safe_name = html.escape(name, quote=True)
-                identities_html += f'<button onclick="selectIdentity({i+1})">{safe_name}</button><br>'
+                identities_html += f'<button onclick="selectIdentity({i + 1})">{safe_name}</button><br>'
 
             return web.Response(
                 text=f"""<html><body>

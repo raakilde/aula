@@ -81,13 +81,19 @@ class MitIDSession:
             json={"identityClaim": username},
         )
         if r.status_code != 200:
-            body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+            body = {}
+            try:
+                body = r.json()
+            except Exception:
+                pass
             code = body.get("errorCode", "")
+            msg = body.get("message", body.get("userMessage", ""))
+            _LOG.error("MitID identify failed (HTTP %s): errorCode=%s, body=%s", r.status_code, code, body)
             if code == "control.identity_not_found":
                 raise CredentialError(f"MitID user '{username}' not found")
             if code == "control.authentication_session_not_found":
                 raise IdentityProviderError("MitID session expired")
-            raise IdentityProviderError(f"MitID identify failed (HTTP {r.status_code})")
+            raise IdentityProviderError(f"MitID identify failed (HTTP {r.status_code}): {code or msg or 'unknown'}")
 
         r2 = self._http.post(
             f"{_CORE_URL}/v2/authentication-sessions/{self._session_id}/next",
@@ -269,7 +275,17 @@ class MitIDSession:
             json={"m1": {"value": m1}, "flowValueProof": {"value": fvp}},
         )
         if r2.status_code != 200:
-            raise IdentityProviderError(f"APP prove failed (HTTP {r2.status_code})")
+            body = {}
+            try:
+                body = r2.json()
+            except Exception:
+                pass
+            _LOG.error(
+                "APP prove failed (HTTP %s): %s",
+                r2.status_code,
+                body.get("errorCode", body) if isinstance(body, dict) else body,
+            )
+            raise IdentityProviderError(f"APP prove failed (HTTP {r2.status_code}): {body.get('errorCode', 'unknown') if isinstance(body, dict) else 'no details'}")
 
         # Verify server M2
         m2 = r2.json()["m2"]["value"]
@@ -482,7 +498,7 @@ class MitIDSession:
             raise IdentityProviderError(f"Expected {label} but got {self._auth_type}")
 
     def _apply_next_authenticator(self, payload: dict) -> None:
-        nxt = payload.get("nextAuthenticator", {})
+        nxt = payload.get("nextAuthenticator") or {}
         self._auth_type = nxt.get("authenticatorType", "")
         self._flow_key = nxt.get("authenticatorSessionFlowKey", "")
         self._eafe_hash = nxt.get("eafeHash", "")

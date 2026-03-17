@@ -14,14 +14,13 @@ import json
 import logging
 import secrets
 import time
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
 from .errors import (
-    AulaAuthError,
     CredentialError,
     FlowError,
     IdentityProviderError,
@@ -81,13 +80,15 @@ class AulaAuthenticator:
         self._identity_chooser = identity_chooser
 
         self._http = requests.Session()
-        self._http.headers.update({
-            "User-Agent": _UA,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Upgrade-Insecure-Requests": "1",
-        })
+        self._http.headers.update(
+            {
+                "User-Agent": _UA,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Upgrade-Insecure-Requests": "1",
+            }
+        )
 
         self._pkce_verifier: Optional[str] = None
         self._pkce_challenge: Optional[str] = None
@@ -96,6 +97,10 @@ class AulaAuthenticator:
 
         # Expose the active MitIDSession for QR-code access
         self.mitid_session: Optional[MitIDSession] = None
+
+    # ── class-level rate limiter to prevent MitID lockout ───────────
+    _last_attempt_time: float = 0
+    _MIN_ATTEMPT_INTERVAL = 30  # seconds between auth attempts
 
     # ══════════════════════════════════════════════════════════════════
     #  Top-level entry points
@@ -106,6 +111,17 @@ class AulaAuthenticator:
 
         Raises :class:`AulaAuthError` (or a subclass) on failure.
         """
+        # Rate-limit to prevent MitID account lockout from rapid retries
+        now = time.time()
+        elapsed = now - AulaAuthenticator._last_attempt_time
+        if elapsed < self._MIN_ATTEMPT_INTERVAL:
+            wait = self._MIN_ATTEMPT_INTERVAL - elapsed
+            _LOG.warning(
+                "Rate-limiting MitID auth — waiting %.0fs to prevent lockout", wait
+            )
+            time.sleep(wait)
+        AulaAuthenticator._last_attempt_time = time.time()
+
         _LOG.info("Starting Aula authentication flow")
         redirect = self._begin_oauth()
         vt, mitid_url = self._navigate_to_mitid(redirect)
@@ -136,7 +152,10 @@ class AulaAuthenticator:
             r = self._http.post(
                 f"{_AUTH_HOST}/simplesaml/module.php/oidc/token.php",
                 data=data,
-                headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
                 timeout=self._timeout,
             )
             if r.status_code != 200:
@@ -169,7 +188,11 @@ class AulaAuthenticator:
             exp = claims.get("exp", 0)
             remaining = exp - time.time()
             if remaining < 300:
-                return {"valid": False, "reason": f"Expires in {int(remaining)}s", "expires_in": remaining}
+                return {
+                    "valid": False,
+                    "reason": f"Expires in {int(remaining)}s",
+                    "expires_in": remaining,
+                }
             return {"valid": True, "expires_in": remaining, "expires_at": exp}
         except Exception as exc:
             return {"valid": False, "reason": str(exc)}
@@ -215,7 +238,9 @@ class AulaAuthenticator:
         for y, row in enumerate(matrix):
             for x, cell in enumerate(row):
                 if cell:
-                    parts.append(f'<rect x="{x}" y="{y}" width="1" height="1" fill="black"/>')
+                    parts.append(
+                        f'<rect x="{x}" y="{y}" width="1" height="1" fill="black"/>'
+                    )
         parts.append("</svg>")
         return "".join(parts)
 
@@ -237,13 +262,19 @@ class AulaAuthenticator:
     # ══════════════════════════════════════════════════════════════════
     def _begin_oauth(self) -> str:
         """Kick off the OIDC authorise request and return the first redirect URL."""
-        verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
-        challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(verifier.encode()).digest()
-        ).decode().rstrip("=")
+        verifier = (
+            base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+        )
+        challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+            .decode()
+            .rstrip("=")
+        )
         self._pkce_verifier = verifier
         self._pkce_challenge = challenge
-        self._oauth_state = base64.urlsafe_b64encode(secrets.token_bytes(16)).decode().rstrip("=")
+        self._oauth_state = (
+            base64.urlsafe_b64encode(secrets.token_bytes(16)).decode().rstrip("=")
+        )
 
         params = {
             "response_type": "code",
@@ -256,7 +287,9 @@ class AulaAuthenticator:
         }
         url = f"{_AUTH_HOST}/simplesaml/module.php/oidc/authorize.php"
         try:
-            r = self._http.get(url, params=params, allow_redirects=False, timeout=self._timeout)
+            r = self._http.get(
+                url, params=params, allow_redirects=False, timeout=self._timeout
+            )
         except requests.RequestException as exc:
             raise TransportError(f"OAuth start failed: {exc}")
 
@@ -294,7 +327,9 @@ class AulaAuthenticator:
                 if "mitid.dk" in r.url or "nemlog-in" in r.url:
                     tok_inp = soup.find("input", {"name": "__RequestVerificationToken"})
                     if not tok_inp:
-                        raise FlowError("Missing __RequestVerificationToken on MitID page")
+                        raise FlowError(
+                            "Missing __RequestVerificationToken on MitID page"
+                        )
                     return tok_inp["value"], r.url
 
                 raise FlowError(f"Unexpected destination: {r.url}")
@@ -325,7 +360,9 @@ class AulaAuthenticator:
             action = f"{_BROKER_HOST}{action}"
 
         try:
-            r = self._http.post(action, data=fields, allow_redirects=False, timeout=self._timeout)
+            r = self._http.post(
+                action, data=fields, allow_redirects=False, timeout=self._timeout
+            )
         except requests.RequestException as exc:
             raise TransportError(f"Broker IdP select failed: {exc}")
 
@@ -399,7 +436,9 @@ class AulaAuthenticator:
             "MitIDAuthCode": auth_code,
             "MitIDAuthenticationCancelled": "",
             "MitIDCoreClientError": "",
-            "SessionStorageActiveSessionUuid": self._http.cookies.get("SessionUuid", ""),
+            "SessionStorageActiveSessionUuid": self._http.cookies.get(
+                "SessionUuid", ""
+            ),
             "SessionStorageActiveChallenge": self._http.cookies.get("Challenge", ""),
         }
         try:
@@ -452,9 +491,14 @@ class AulaAuthenticator:
             raise FlowError(f"Invalid identity selection: {choice}")
 
         r = self._http.post(
-            response.url, data=fields,
-            headers={"Content-Type": "application/x-www-form-urlencoded", "Referer": response.url},
-            allow_redirects=True, timeout=self._timeout,
+            response.url,
+            data=fields,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": response.url,
+            },
+            allow_redirects=True,
+            timeout=self._timeout,
         )
         return r, BeautifulSoup(r.text, "html.parser")
 
@@ -484,7 +528,10 @@ class AulaAuthenticator:
             fields2["selected-aktoer"] = "KONTAKT"
 
         r3 = self._http.post(
-            url2, data=fields2, allow_redirects=False, timeout=self._timeout,
+            url2,
+            data=fields2,
+            allow_redirects=False,
+            timeout=self._timeout,
         )
 
         # Handle intermediate confirmation
@@ -502,7 +549,10 @@ class AulaAuthenticator:
                         if inp.get("name"):
                             conf_fields[inp["name"]] = inp.get("value", "")
                     r3 = self._http.post(
-                        action, data=conf_fields, allow_redirects=False, timeout=self._timeout,
+                        action,
+                        data=conf_fields,
+                        allow_redirects=False,
+                        timeout=self._timeout,
                     )
 
         if "Location" not in r3.headers:
@@ -591,7 +641,10 @@ class AulaAuthenticator:
                     "redirect_uri": _APP_REDIRECT,
                     "code_verifier": self._pkce_verifier,
                 },
-                headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
                 timeout=self._timeout,
             )
         except requests.RequestException as exc:
