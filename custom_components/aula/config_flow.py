@@ -1,229 +1,320 @@
-import asyncio
-import html
+"""Aula config flow — OAuth2 token-based setup.
+
+The user obtains access + refresh tokens via the sniffer tool
+(or from the Aula mobile app via mitmproxy) and pastes them here.
+Tokens are refreshed automatically via the standard OAuth2 refresh_token grant.
+"""
+
 import logging
+import time
 from typing import Any, Dict, Optional
 
+import requests
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.components.http import HomeAssistantView
 
 from .const import (
-    AUTH_METHOD_APP,
-    AUTH_METHOD_TOKEN,
+    API,
+    API_VERSION,
     CONF_ACCESS_TOKEN,
-    CONF_AUTH_METHOD,
-    CONF_MITID_IDENTITY,
-    CONF_MITID_PASSWORD,
-    CONF_MITID_TOKEN,
-    CONF_MITID_USE_TOKEN,
-    CONF_MITID_USERNAME,
+    CONF_DEVICE_ID,
     CONF_REFRESH_TOKEN,
     CONF_SCHOOLSCHEDULE,
     CONF_TOKEN_EXPIRES_AT,
     CONF_UGEPLAN,
     DOMAIN,
+    OAUTH_CLIENT_ID,
+    OAUTH_TOKEN_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Schema for MitID authentication
-AUTH_METHOD_SCHEMA = vol.Schema(
+TOKEN_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_MITID_USERNAME): str,
-        vol.Optional(CONF_MITID_USE_TOKEN, default=False): bool,
+        vol.Required(CONF_ACCESS_TOKEN): str,
+        vol.Required(CONF_REFRESH_TOKEN): str,
+        vol.Required(CONF_DEVICE_ID): str,
         vol.Optional(CONF_SCHOOLSCHEDULE, default=True): bool,
         vol.Optional(CONF_UGEPLAN, default=True): bool,
     }
 )
 
-# Schema for TOKEN auth credentials
-TOKEN_AUTH_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_MITID_PASSWORD): str,
-        vol.Required(CONF_MITID_TOKEN): str,
-    }
-)
-
 
 class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Aula config flow with MitID authentication.
+    """Aula config flow — paste OAuth2 tokens from sniffer."""
 
-    Supports APP (push to phone) and TOKEN (password + hardware token) methods.
-    """
+    VERSION = 4
 
-    VERSION = 3
-
-    def __init__(self):
-        """Initialize config flow."""
-        super().__init__()
-        self._mitid_username = None
-        self._mitid_password = None
-        self._mitid_token = None
-        self._use_token = False
-        self._schoolschedule = True
-        self._ugeplan = True
-        self._auth_client = None
-        self._auth_task = None
-        self._auth_result = None
-        self._auth_error = None
-        self._available_identities = None
-        self._selected_identity = None
+    def __init__(self) -> None:
+        """Initialize config flow state."""
+        self._reauth_entry: Optional[config_entries.ConfigEntry] = None
 
     async def async_step_user(self, user_input=None):
-        """MitID authentication - enter username and options."""
+        """Step 1: paste access + refresh token + device_id.
+
+        After token validation, the integration will execute the post-auth
+        initialization sequence matching the iOS app:
+        1. profiles.getProfileContext (widgets)
+        2. profiles.getprofilesbylogin (children/profiles)
+        3. notifications.registerDevice
+        4. configuration methods
+        5. notifications.getNotificationsForActiveProfile
+        6. posts.getAllPosts
+        """
         errors = {}
 
         if user_input is not None:
-            self._mitid_username = user_input[CONF_MITID_USERNAME]
-            self._use_token = user_input.get(CONF_MITID_USE_TOKEN, False)
-            self._schoolschedule = user_input.get(CONF_SCHOOLSCHEDULE, True)
-            self._ugeplan = user_input.get(CONF_UGEPLAN, True)
+            access_token = user_input[CONF_ACCESS_TOKEN].strip()
+            refresh_token = user_input[CONF_REFRESH_TOKEN].strip()
+            device_id = user_input[CONF_DEVICE_ID].strip()
 
-            if self._use_token:
-                return await self.async_step_token_credentials()
+            _LOGGER.info(
+                "Aula setup: Validating tokens with device_id=%s",
+                device_id[:20] + "..." if len(device_id) > 20 else device_id,
+            )
+
+            # Quick validation: try the access token against the Aula API
+            valid = await self.hass.async_add_executor_job(
+                self._test_token, access_token, device_id
+            )
+
+            if valid:
+                _LOGGER.info(
+                    "Aula setup: Token validated, will initialize with post-auth flow"
+                )
+                return self.async_create_entry(
+                    title="Aula",
+                    data={
+                        CONF_ACCESS_TOKEN: access_token,
+                        CONF_REFRESH_TOKEN: refresh_token,
+                        CONF_DEVICE_ID: device_id,
+                        CONF_TOKEN_EXPIRES_AT: time.time() + 3600,
+                        CONF_SCHOOLSCHEDULE: user_input.get(CONF_SCHOOLSCHEDULE, True),
+                        CONF_UGEPLAN: user_input.get(CONF_UGEPLAN, True),
+                    },
+                )
             else:
-                return await self.async_step_authenticate()
+                # Token rejected — try refreshing instead
+                _LOGGER.debug("Aula setup: Access token invalid, attempting refresh")
+                new_tokens = await self.hass.async_add_executor_job(
+                    self._try_refresh, refresh_token, device_id
+                )
+                if new_tokens:
+                    _LOGGER.info(
+                        "Aula setup: Tokens refreshed successfully, "
+                        "will initialize with post-auth flow"
+                    )
+                    return self.async_create_entry(
+                        title="Aula",
+                        data={
+                            CONF_ACCESS_TOKEN: new_tokens["access_token"],
+                            CONF_REFRESH_TOKEN: new_tokens.get(
+                                "refresh_token", refresh_token
+                            ),
+                            CONF_DEVICE_ID: device_id,
+                            CONF_TOKEN_EXPIRES_AT: time.time()
+                            + new_tokens.get("expires_in", 3600),
+                            CONF_SCHOOLSCHEDULE: user_input.get(
+                                CONF_SCHOOLSCHEDULE, True
+                            ),
+                            CONF_UGEPLAN: user_input.get(CONF_UGEPLAN, True),
+                        },
+                    )
+                _LOGGER.warning("Aula setup: Token validation and refresh failed")
+                errors["base"] = "invalid_token"
 
         return self.async_show_form(
             step_id="user",
-            data_schema=AUTH_METHOD_SCHEMA,
+            data_schema=TOKEN_SCHEMA,
             errors=errors,
         )
 
-    async def async_step_token_credentials(self, user_input=None):
-        """Collect TOKEN auth credentials (password + token code)."""
+    async def async_step_reauth(self, entry_data: dict[str, Any]):
+        """Handle Home Assistant initiated re-authentication."""
+        self._reauth_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+
+        if self._reauth_entry is None:
+            return self.async_abort(reason="unknown")
+
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        """Confirm re-authentication by pasting fresh tokens.
+
+        After token validation, the integration will execute the post-auth
+        initialization sequence matching the iOS app:
+        1. profiles.getProfileContext (widgets)
+        2. profiles.getprofilesbylogin (children/profiles)
+        3. notifications.registerDevice
+        4. configuration methods
+        5. notifications.getNotificationsForActiveProfile
+        6. posts.getAllPosts
+        """
         errors = {}
 
         if user_input is not None:
-            self._mitid_password = user_input[CONF_MITID_PASSWORD]
-            self._mitid_token = user_input[CONF_MITID_TOKEN]
-            return await self.async_step_authenticate()
+            access_token = user_input[CONF_ACCESS_TOKEN].strip()
+            refresh_token = user_input[CONF_REFRESH_TOKEN].strip()
+            device_id = user_input[CONF_DEVICE_ID].strip()
+
+            _LOGGER.info(
+                "Aula reauth: Validating tokens with device_id=%s",
+                device_id[:20] + "..." if len(device_id) > 20 else device_id,
+            )
+
+            valid = await self.hass.async_add_executor_job(
+                self._test_token, access_token, device_id
+            )
+
+            if not valid:
+                _LOGGER.debug("Aula reauth: Access token invalid, attempting refresh")
+                new_tokens = await self.hass.async_add_executor_job(
+                    self._try_refresh, refresh_token, device_id
+                )
+                if new_tokens:
+                    access_token = new_tokens["access_token"]
+                    refresh_token = new_tokens.get("refresh_token", refresh_token)
+                    _LOGGER.info(
+                        "Aula reauth: Tokens refreshed successfully, "
+                        "initialization will proceed with post-auth flow"
+                    )
+                else:
+                    _LOGGER.warning("Aula reauth: Token refresh failed")
+                    errors["base"] = "invalid_token"
+
+            if not errors:
+                reauth_entry = self._reauth_entry
+                if reauth_entry is None:
+                    return self.async_abort(reason="unknown")
+
+                new_data = dict(reauth_entry.data)
+                new_data[CONF_ACCESS_TOKEN] = access_token
+                new_data[CONF_REFRESH_TOKEN] = refresh_token
+                new_data[CONF_DEVICE_ID] = device_id
+                new_data[CONF_TOKEN_EXPIRES_AT] = time.time() + 3600
+
+                self.hass.config_entries.async_update_entry(reauth_entry, data=new_data)
+                _LOGGER.info("Aula reauth: Reloading integration with new tokens")
+                await self.hass.config_entries.async_reload(reauth_entry.entry_id)
+
+                return self.async_abort(reason="reauth_successful")
 
         return self.async_show_form(
-            step_id="token_credentials",
-            data_schema=TOKEN_AUTH_SCHEMA,
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_ACCESS_TOKEN): str,
+                    vol.Required(CONF_REFRESH_TOKEN): str,
+                    vol.Required(CONF_DEVICE_ID): str,
+                }
+            ),
             errors=errors,
         )
-
-    async def async_step_authenticate(self, user_input=None):
-        """Start MitID authentication.
-
-        For APP auth: sends push notification to user's phone.
-        For TOKEN auth: uses password + token code.
-        """
-        auth_method = AUTH_METHOD_TOKEN if self._use_token else AUTH_METHOD_APP
-
-        # Register the auth status view if not already registered
-        try:
-            self.hass.http.register_view(AulaAuthStatusView(self.hass))
-        except Exception:
-            pass  # View might already be registered
-
-        # Store flow_id for external access
-        self.hass.data.setdefault(DOMAIN, {})
-        self.hass.data[DOMAIN][f"auth_flow_{self.flow_id}"] = self
-
-        # Start background authentication
-        self._auth_task = self.hass.async_create_task(
-            self._authenticate_async(auth_method)
-        )
-
-        return self.async_external_step(
-            step_id="authenticate",
-            url=f"/api/aula/auth/{self.flow_id}",
-        )
-
-    async def _authenticate_async(self, auth_method: str):
-        """Run MitID authentication in background."""
-        try:
-            from .aula_auth import AulaAuthenticator
-
-            self._auth_client = AulaAuthenticator(
-                username=self._mitid_username,
-                password=self._mitid_password,
-                token_code=self._mitid_token,
-                method=auth_method,
-            )
-
-            # Set up identity selector callback
-            ha_loop = self.hass.loop
-
-            def identity_selector(identities):
-                """Called when multiple identities are available."""
-                self._available_identities = identities
-                # Wait for user selection — use captured HA loop, not get_event_loop()
-                future = asyncio.run_coroutine_threadsafe(
-                    self._wait_for_identity_selection(),
-                    ha_loop,
-                )
-                return future.result(timeout=120)
-
-            self._auth_client._identity_chooser = identity_selector
-
-            # Run authentication in executor (blocking I/O)
-            result = await self.hass.async_add_executor_job(self._auth_client.run)
-
-            self._auth_result = result
-            _LOGGER.info("MitID authentication completed successfully")
-
-        except Exception as e:
-            _LOGGER.error(f"MitID authentication failed: {e}")
-            self._auth_error = str(e)
-
-        # Signal external step completion (only once)
-        if not getattr(self, "_completion_signalled", False):
-            self._completion_signalled = True
-            self.hass.async_create_task(
-                self.hass.config_entries.flow.async_configure(flow_id=self.flow_id)
-            )
-
-    async def _wait_for_identity_selection(self):
-        """Wait for user to select an identity (called from auth thread)."""
-        while self._selected_identity is None:
-            await asyncio.sleep(0.5)
-        return self._selected_identity
-
-    async def async_step_authenticate_complete(self, user_input=None):
-        """Called when external step completes (redirect from auth view)."""
-        # Clean up flow data
-        self.hass.data.get(DOMAIN, {}).pop(f"auth_flow_{self.flow_id}", None)
-
-        if self._auth_error:
-            return self.async_abort(reason="auth_failed")
-
-        if not self._auth_result or not self._auth_result.get("access_token"):
-            return self.async_abort(reason="auth_failed")
-
-        tokens = self._auth_result
-
-        data = {
-            CONF_AUTH_METHOD: AUTH_METHOD_TOKEN if self._use_token else AUTH_METHOD_APP,
-            CONF_MITID_USERNAME: self._mitid_username,
-            CONF_SCHOOLSCHEDULE: self._schoolschedule,
-            CONF_UGEPLAN: self._ugeplan,
-            CONF_ACCESS_TOKEN: tokens.get("access_token"),
-            CONF_REFRESH_TOKEN: tokens.get("refresh_token"),
-            CONF_TOKEN_EXPIRES_AT: tokens.get("expires_at", 0),
-        }
-
-        if self._use_token:
-            # NOTE: Do NOT persist mitid_password or mitid_token to disk.
-            # Only the OAuth refresh_token should be stored for re-authentication.
-            data[CONF_AUTH_METHOD] = AUTH_METHOD_TOKEN
-
-        if self._selected_identity:
-            data[CONF_MITID_IDENTITY] = self._selected_identity
-
-        return self.async_create_entry(title="Aula", data=data)
 
     @staticmethod
     def async_get_options_flow(config_entry):
         """Return options flow handler."""
         return OptionsFlowHandler(config_entry)
 
+    # ── helpers ──────────────────────────────────────────────
+
+    @staticmethod
+    def _test_token(access_token: str, device_id: str | None = None) -> bool:
+        """Test an access token against the Aula API.
+
+        Tests against multiple API versions to match startup behavior.
+        Returns True if at least one version responds with 200 OK.
+        """
+        versions = ["23", str(API_VERSION), "24", "25", "21"]
+        versions = list(dict.fromkeys(versions))
+
+        try:
+            for version in versions:
+                # getProfileContext is the first post-auth call and works on v23
+                # getProfilesByLogin returns 410 (deprecated) or 403 (missing portalRoles[] param)
+                url = f"{API}{version}/?method=profiles.getProfileContext&portalrole=guardian"
+                if device_id:
+                    url += f"&deviceId={device_id}"
+
+                r = requests.get(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Accept": "application/json",
+                    },
+                    timeout=15,
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    if data.get("status", {}).get("message") == "OK":
+                        _LOGGER.debug("Aula: Token validated against API v%s", version)
+                        return True
+                else:
+                    _LOGGER.debug(
+                        "Aula: Token test against API v%s failed: HTTP %s",
+                        version,
+                        r.status_code,
+                    )
+        except Exception as e:
+            _LOGGER.debug("Aula: Token test failed: %s", e)
+        return False
+
+    @staticmethod
+    def _try_refresh(
+        refresh_token: str, device_id: str | None = None
+    ) -> Optional[dict]:
+        """Try to get a new access token via refresh_token grant.
+
+        Note: Refresh tokens are single-use. If already exchanged by the iOS app,
+        will fail with "invalid_grant" error with "Cannot decrypt refresh token".
+        """
+        try:
+            # Validate token format
+            refresh_token = str(refresh_token).strip()
+            if not refresh_token or len(refresh_token) < 20:
+                _LOGGER.warning(
+                    "Token refresh failed: refresh_token invalid (len=%d)",
+                    len(refresh_token),
+                )
+                return None
+
+            grant_data = {
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": OAUTH_CLIENT_ID,
+            }
+
+            # Include device_id if provided
+            if device_id:
+                grant_data["device_id"] = device_id
+
+            r = requests.post(
+                OAUTH_TOKEN_URL,
+                data=grant_data,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                timeout=15,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                _LOGGER.debug(
+                    "Token refresh succeeded: response keys=%s, expires_in=%s",
+                    list(data.keys()),
+                    data.get("expires_in", "?"),
+                )
+                return data
+            _LOGGER.warning("Refresh failed: HTTP %s — %s", r.status_code, r.text[:200])
+        except Exception as e:
+            _LOGGER.warning("Refresh error: %s", e)
+        return None
+
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle Aula options flow."""
+    """Handle Aula options — re-paste tokens when expired."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry):
         """Initialize options flow."""
@@ -235,111 +326,46 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return await self.async_step_reauth(user_input)
 
     async def async_step_reauth(self, user_input=None):
-        """Re-authenticate with MitID."""
+        """Re-authenticate by pasting new tokens."""
+        errors = {}
+
         if user_input is not None:
-            # Trigger re-authentication via config flow
-            return self.async_create_entry(title="", data={"reauth": True})
+            access_token = user_input[CONF_ACCESS_TOKEN].strip()
+            refresh_token = user_input[CONF_REFRESH_TOKEN].strip()
+            device_id = user_input[CONF_DEVICE_ID].strip()
+
+            valid = await self.hass.async_add_executor_job(
+                AulaCustomConfigFlow._test_token, access_token, device_id
+            )
+            if not valid:
+                new_tokens = await self.hass.async_add_executor_job(
+                    AulaCustomConfigFlow._try_refresh, refresh_token
+                )
+                if new_tokens:
+                    access_token = new_tokens["access_token"]
+                    refresh_token = new_tokens.get("refresh_token", refresh_token)
+                else:
+                    errors["base"] = "invalid_token"
+
+            if not errors:
+                new_data = dict(self._config_entry.data)
+                new_data[CONF_ACCESS_TOKEN] = access_token
+                new_data[CONF_REFRESH_TOKEN] = refresh_token
+                new_data[CONF_DEVICE_ID] = device_id
+                new_data[CONF_TOKEN_EXPIRES_AT] = time.time() + 3600
+                self.hass.config_entries.async_update_entry(
+                    self._config_entry, data=new_data
+                )
+                return self.async_create_entry(title="", data={})
 
         return self.async_show_form(
             step_id="reauth",
-            data_schema=vol.Schema({}),
-            description_placeholders={
-                "username": self._config_entry.data.get(CONF_MITID_USERNAME, ""),
-            },
-        )
-
-
-class AulaAuthStatusView(HomeAssistantView):
-    """View to check MitID authentication status and display QR codes.
-
-    This endpoint must be unauthenticated (requires_auth = False) because
-    the user's browser accesses it during the MitID login redirect flow,
-    where no HA auth token is available. The flow_id in the URL serves as
-    a short-lived, unguessable token to prevent unauthorized access.
-    """
-
-    url = "/api/aula/auth/{flow_id}"
-    name = "api:aula:auth"
-    requires_auth = False
-
-    def __init__(self, hass):
-        """Initialize the auth status view."""
-        self._hass = hass
-
-    async def get(self, request, flow_id):
-        """Handle GET request - show auth status page."""
-        from aiohttp import web
-
-        flow = self._hass.data.get(DOMAIN, {}).get(f"auth_flow_{flow_id}")
-
-        if not flow:
-            return web.Response(
-                text="<html><body><h2>Authentication session not found.</h2></body></html>",
-                content_type="text/html",
-            )
-
-        # Check if auth completed
-        if flow._auth_result or flow._auth_error:
-            redirect_url = f"/api/aula/auth/{flow_id}/complete"
-            return web.Response(
-                text=f"""<html><head>
-                    <meta http-equiv="refresh" content="0;url={redirect_url}">
-                </head><body>
-                    <h2>Authentication complete! Redirecting...</h2>
-                </body></html>""",
-                content_type="text/html",
-            )
-
-        # Check for identity selection needed
-        if flow._available_identities:
-            identities_html = ""
-            for i, name in enumerate(flow._available_identities):
-                safe_name = html.escape(name, quote=True)
-                identities_html += f'<button onclick="selectIdentity({i + 1})">{safe_name}</button><br>'
-
-            return web.Response(
-                text=f"""<html><body>
-                    <h2>Select Identity</h2>
-                    {identities_html}
-                    <script>
-                    function selectIdentity(id) {{
-                        fetch('/api/aula/auth/{flow_id}/identity?id=' + id)
-                            .then(() => location.reload());
-                    }}
-                    </script>
-                </body></html>""",
-                content_type="text/html",
-            )
-
-        # Show waiting page with QR codes if available
-        qr_html = ""
-        if flow._auth_client:
-            try:
-                qr_svgs = flow._auth_client.qr_svg_pair()
-                if qr_svgs:
-                    qr_html = f"""
-                    <div style="display:flex; gap:20px; justify-content:center;">
-                        <div>{qr_svgs[0]}</div>
-                        <div>{qr_svgs[1]}</div>
-                    </div>
-                    <p>Scan a QR code with MitID app, or approve the push notification on your phone.</p>
-                    """
-            except Exception:
-                pass
-
-        return web.Response(
-            text=f"""<html><head>
-                <meta http-equiv="refresh" content="3">
-                <style>
-                    body {{ font-family: sans-serif; text-align: center; padding: 40px; }}
-                    .spinner {{ animation: spin 1s linear infinite; display: inline-block; }}
-                    @keyframes spin {{ from {{ transform: rotate(0deg) }} to {{ transform: rotate(360deg) }} }}
-                </style>
-            </head><body>
-                <h2>Waiting for MitID authentication...</h2>
-                <div class="spinner">⏳</div>
-                <p>Please approve the login request in your MitID app.</p>
-                {qr_html}
-            </body></html>""",
-            content_type="text/html",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_ACCESS_TOKEN): str,
+                    vol.Required(CONF_REFRESH_TOKEN): str,
+                    vol.Required(CONF_DEVICE_ID): str,
+                }
+            ),
+            errors=errors,
         )

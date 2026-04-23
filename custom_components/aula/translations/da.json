@@ -1,47 +1,49 @@
 {
   "config": {
     "error": {
-      "1": "Ukendt fejl",
-      "2": "Ukendt fejl",
-      "auth_failed": "MitID godkendelse mislykkedes. Prøv igen."
+      "invalid_token": "Access token eller refresh token er ugyldigt. Prøv igen med nye tokens fra snifferen."
     },
     "step": {
+      "reauth_confirm": {
+        "title": "Gengodkend",
+        "description": "Indsæt nye OAuth2 tokens for at gendanne din Aula session.",
+        "data": {
+          "access_token": "Access Token",
+          "refresh_token": "Refresh Token",
+          "device_id": "Device ID"
+        }
+      },
       "user": {
         "title": "Aula Opsætning",
-        "description": "Indtast dit MitID brugernavn for at starte godkendelse.",
+        "description": "Indsæt OAuth2 tokens fra Aula-appen via sniffer-værktøjet.",
         "data": {
-          "mitid_username": "MitID Brugernavn",
-          "mitid_use_token": "Brug TOKEN godkendelse (i stedet for APP)",
+          "access_token": "Access Token",
+          "refresh_token": "Refresh Token",
+          "device_id": "Device ID",
           "schoolschedule": "Tilføj skoleskemaer som kalender entiteter?",
           "ugeplan": "Tilføj ugeplaner som sensor attributter?"
         }
-      },
-      "token_credentials": {
-        "title": "MitID Token Legitimationsoplysninger",
-        "description": "Indtast dit MitID password og token-kode for TOKEN godkendelse.",
-        "data": {
-          "mitid_password": "MitID Password",
-          "mitid_token": "MitID Token Kode"
-        }
-      },
-      "authenticate": {
-        "title": "MitID Godkendelse",
-        "description": "Godkend login forespørgslen i din MitID app..."
       }
     },
     "abort": {
-      "auth_failed": "MitID godkendelse mislykkedes. Prøv igen."
+      "already_configured": "Aula er allerede konfigureret.",
+      "reauth_successful": "Gengodkendelse gennemført."
     }
   },
   "options": {
+    "error": {
+      "invalid_token": "Token er ugyldigt eller udløbet. Prøv igen."
+    },
     "step": {
       "reauth": {
         "title": "Gengodkend",
-        "description": "Gengodkend med MitID for bruger {username}."
+        "description": "Indsæt nye OAuth2 tokens for at forny din Aula session.",
+        "data": {
+          "access_token": "Access Token",
+          "refresh_token": "Refresh Token",
+          "device_id": "Device ID"
+        }
       }
-    },
-    "error": {
-      "update_failed": "Kunne ikke opdatere. Prøv igen."
     }
   },
   "entity": {

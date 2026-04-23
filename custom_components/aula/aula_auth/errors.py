@@ -10,7 +10,7 @@ class CredentialError(AulaAuthError):
 
 
 class IdentityProviderError(AulaAuthError):
-    """Raised when communication with MitID / NemLogin fails."""
+    """Raised when communication with the identity provider fails."""
 
 
 class TokenError(AulaAuthError):

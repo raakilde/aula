@@ -18,14 +18,14 @@ import re
 import time
 
 import requests
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
-from .aula_auth import AuthMixin
 from .const import (
-    AUTH_METHOD_APP,
     CICERO_API,
     MEEBOOK_API,
     MIN_UDDANNELSE_API,
+    OAUTH_CLIENT_ID,
+    OAUTH_TOKEN_URL,
     SYSTEMATIC_API,
 )
 from .mail import MailMixin
@@ -44,7 +44,150 @@ def _safe_json(response, context="API call"):
     return response.json()
 
 
-class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
+class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
+    def _resolve_api_url(self):
+        """Resolve a working Aula API base URL.
+
+        Tries configured API version first, then a small set of nearby versions.
+        """
+        from .const import API, API_VERSION
+
+        preferred = str(API_VERSION)
+        candidates = [preferred, "23", "24", "25", "21"]
+        # Keep order but remove duplicates.
+        candidates = list(dict.fromkeys(candidates))
+
+        for version in candidates:
+            apiurl = API + version + "/"
+            try:
+                # Use getProfileContext as probe — it's the first real post-auth call
+                # and works on v23 with portalrole=guardian.
+                # Auth via ?access_token= URL param (matches iOS app, not Bearer header).
+                probe_url = (
+                    apiurl + "?method=profiles.getProfileContext&portalrole=guardian"
+                )
+                if self._device_id:
+                    probe_url += f"&deviceId={self._device_id}"
+                if self._access_token:
+                    probe_url += f"&access_token={self._access_token}"
+                response = self._session.get(
+                    probe_url,
+                    verify=True,
+                    timeout=10,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("status", {}).get("message") == "OK":
+                        if version != preferred:
+                            _LOGGER.warning(
+                                "Configured Aula API version v%s unavailable, using v%s",
+                                preferred,
+                                version,
+                            )
+                        return apiurl
+            except Exception as exc:
+                _LOGGER.debug("API version probe v%s failed: %s", version, exc)
+
+        fallback_url = API + preferred + "/"
+        _LOGGER.warning(
+            "Could not verify a working Aula API version, falling back to configured v%s",
+            preferred,
+        )
+        return fallback_url
+
+    def _setup_post_login(self):
+        """Setup API access after successful login.
+
+        Mirrors the iOS app post-auth sequence from sniffer capture:
+        1. profiles.getProfileContext&portalrole=guardian  → widget config
+        2. profiles.getprofilesbylogin&portalRoles[]=guardian → children/profiles
+        3. notifications.registerDevice (POST)             → device registration
+        """
+        try:
+            self.apiurl = self._resolve_api_url()
+            _LOGGER.debug(f"Using API at {self.apiurl}")
+
+            # Step 1: getProfileContext — widget config (first call in iOS post-auth)
+            try:
+                profile_context = self._session.get(
+                    self._make_api_url(
+                        "profiles.getProfileContext", portalrole="guardian"
+                    ),
+                    verify=True,
+                    timeout=10,
+                ).json()
+
+                if (
+                    profile_context
+                    and "data" in profile_context
+                    and profile_context["data"]
+                    and "institutionProfile" in profile_context["data"]
+                ):
+                    _LOGGER.info("Successfully retrieved profile context")
+                else:
+                    _LOGGER.warning("Profile context response missing expected data")
+
+            except Exception as e:
+                _LOGGER.error(f"Failed to get profile context: {e}")
+
+            # Step 2: getprofilesbylogin — children/profiles (second call in iOS post-auth)
+            # Note: method name is all-lowercase and requires portalRoles[]=guardian
+            if not (hasattr(self, "_profiles") and self._profiles):
+                ver = self._session.get(
+                    self._make_api_url(
+                        "profiles.getprofilesbylogin",
+                        portalRoles=["guardian"],
+                    ),
+                    verify=True,
+                    timeout=10,
+                )
+
+                if ver.status_code == 200:
+                    try:
+                        response_data = ver.json()
+                        if (
+                            "data" in response_data
+                            and "profiles" in response_data["data"]
+                        ):
+                            self._profiles = response_data["data"]["profiles"]
+                            _LOGGER.info(f"Successfully connected to API {self.apiurl}")
+                        else:
+                            raise ConfigEntryNotReady(
+                                "API response missing expected data structure"
+                            )
+                    except ValueError as e:
+                        raise ConfigEntryNotReady(
+                            f"Invalid JSON response from API: {e}"
+                        )
+                else:
+                    raise ConfigEntryNotReady(
+                        f"API returned unexpected status: {ver.status_code}"
+                    )
+
+            # Step 3: notifications.registerDevice (POST) — third call in iOS post-auth
+            try:
+                self._session.post(
+                    self._make_api_url("notifications.registerDevice"),
+                    verify=True,
+                    timeout=10,
+                )
+                _LOGGER.debug("Device registered with notifications service")
+            except Exception as e:
+                _LOGGER.warning(f"notifications.registerDevice failed (non-fatal): {e}")
+
+        except ConfigEntryNotReady:
+            raise
+        except Exception as e:
+            _LOGGER.error(f"Post-login setup failed: {e}")
+            raise
+
+        _LOGGER.debug(
+            "Config - schoolschedule: "
+            + str(self._schoolschedule)
+            + ", config - ugeplaner: "
+            + str(self._ugeplan)
+        )
+
     huskeliste = {}
     presence = {}
     presence_templates = {}
@@ -68,29 +211,22 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self,
         schoolschedule,
         ugeplan,
-        auth_method=None,
-        mitid_username=None,
-        mitid_password=None,
-        mitid_token=None,
         stored_tokens=None,
         token_persist_callback=None,
         hass=None,
         config_entry=None,
+        device_id=None,
     ):
         self._session = None
         self._last_data_update = 0
 
-        # MitID token-based auth fields
-        self._auth_method = auth_method or AUTH_METHOD_APP
-        self._mitid_username = mitid_username
-        self._mitid_password = mitid_password
-        self._mitid_token = mitid_token
+        # OAuth2 token storage (from secret storage)
         self._stored_tokens = stored_tokens or {}
         self._token_persist_callback = token_persist_callback
-        self._login_client = None
         self._access_token = None
         self._hass = hass
         self._config_entry = config_entry
+        self._device_id = device_id
 
         # Use Home Assistant config dir for data files (not CWD)
         self._data_dir = hass.config.path() if hass else os.getcwd()
@@ -119,7 +255,20 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self._daily_overview = {}
 
     def _ensure_token_auth(self):
-        """Ensure we have a valid access token (MitID auth method)."""
+        """Ensure we have a valid access token for API calls.
+
+        Token Authentication Strategy:
+        1. Load access_token, refresh_token, expires_at from storage
+        2. Check if access_token still valid (5 min buffer before actual expiry)
+        3. If expired: Use refresh_token to get new access_token (OAuth2 grant)
+        4. If no refresh_token: Raise ConfigEntryAuthFailed (user must reauth)
+        5. Store self._access_token for Authorization header in API calls
+
+        Device ID:
+        - Always included in API URL params (self._device_id)
+        - Required in every API call
+        - Never expires, never refreshed
+        """
         if not self._session:
             self._session = requests.Session()
             self._session.headers.update(
@@ -129,27 +278,47 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 }
             )
 
-        # Check if we have stored tokens
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 1: Load tokens from storage (Set on __init__ from config entry)
+        # ──────────────────────────────────────────────────────────────────
         access_token = self._stored_tokens.get("access_token")
         refresh_token = self._stored_tokens.get("refresh_token")
-        expires_at = self._stored_tokens.get("expires_at", 0)
+        # Support both legacy and current expiry keys.
+        expires_at = self._stored_tokens.get(
+            "expires_at", self._stored_tokens.get("token_expires_at", 0)
+        )
 
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 2: Check if access_token still valid (with 5 min buffer)
+        # ──────────────────────────────────────────────────────────────────
+        # Why 5 min buffer? Avoid using token that's about to expire mid-API-call
         if access_token and time.time() < expires_at - 300:
-            # Token still valid (with 5 min buffer)
+            # ✅ Token still valid, use it
             self._access_token = access_token
-            _LOGGER.debug("Using existing access token (valid)")
+            _LOGGER.debug(
+                "Using existing access token (expires in %ds)",
+                int(expires_at - time.time()),
+            )
             return True
 
-        # Try to refresh the token — simple HTTP POST, no MitID needed
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 3: Access token expired, try refresh (simple HTTP POST)
+        # ──────────────────────────────────────────────────────────────────
+        # No MitID approval needed - refresh_token is long-lived (~30 days)
         if refresh_token:
             _LOGGER.debug("Access token expired, attempting refresh...")
             try:
+                # ──────────────────────────────────────────────────────────────────
+                # STEP 3a: POST to OAuth token endpoint with refresh_token grant
+                # ──────────────────────────────────────────────────────────────────
+                # No MitID needed - refresh_token is long-lived (~30 days)
+                # Returns new access_token with fresh expiry
                 r = self._session.post(
-                    "https://login.aula.dk/simplesaml/module.php/oidc/token.php",
+                    OAUTH_TOKEN_URL,
                     data={
                         "grant_type": "refresh_token",
                         "refresh_token": refresh_token,
-                        "client_id": "_99949a54b8b65423862aac1bf629599ed64231607a",
+                        "client_id": OAUTH_CLIENT_ID,
                     },
                     headers={
                         "Content-Type": "application/x-www-form-urlencoded",
@@ -157,44 +326,110 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     },
                     timeout=30,
                 )
+
+                # ──────────────────────────────────────────────────────────────────
+                # STEP 3b: Process refresh response
+                # ──────────────────────────────────────────────────────────────────
                 if r.status_code == 200:
                     new = r.json()
+
+                    # Update stored tokens with fresh values
                     self._stored_tokens["access_token"] = new["access_token"]
+
+                    # Refresh token may be rotated (include if in response)
                     if "refresh_token" in new:
                         self._stored_tokens["refresh_token"] = new["refresh_token"]
+
+                    # Calculate new expiry timestamp
                     if "expires_in" in new:
-                        self._stored_tokens["expires_at"] = (
-                            time.time() + new["expires_in"]
-                        )
+                        expires_ts = time.time() + new["expires_in"]
+                        self._stored_tokens["expires_at"] = expires_ts
+                        self._stored_tokens["token_expires_at"] = expires_ts
+
+                    # Device ID never changes - keep it in storage
+                    if self._device_id:
+                        self._stored_tokens["device_id"] = self._device_id
+
+                    # Set in-use access token
                     self._access_token = new["access_token"]
+
+                    # ──────────────────────────────────────────────────────────────────
+                    # STEP 3c: Persist refreshed tokens to Home Assistant storage
+                    # ──────────────────────────────────────────────────────────────────
+                    # This ensures tokens survive process restarts
                     if self._token_persist_callback:
-                        self._token_persist_callback(self._stored_tokens)
+                        cb = self._token_persist_callback
+                        # Running in a SyncWorker thread — no event loop here.
+                        # Use run_coroutine_threadsafe to safely call async callbacks.
+                        import asyncio
+
+                        if asyncio.iscoroutinefunction(cb):
+                            if self._hass and self._hass.loop:
+                                asyncio.run_coroutine_threadsafe(
+                                    cb(self._stored_tokens), self._hass.loop
+                                )
+                            else:
+                                _LOGGER.warning(
+                                    "Cannot persist tokens: no event loop available"
+                                )
+                        else:
+                            cb(self._stored_tokens)
+
                     _LOGGER.info(
                         "Access token refreshed (expires in %ss)",
                         new.get("expires_in", "?"),
                     )
                     return True
                 else:
-                    _LOGGER.warning("Token refresh failed: HTTP %s", r.status_code)
+                    # Refresh failed (bad grant, expired refresh token, etc.)
+                    _LOGGER.warning(
+                        "Token refresh failed: HTTP %s. "
+                        "Refresh token may have expired. User must reauth.",
+                        r.status_code,
+                    )
             except Exception as e:
                 _LOGGER.error("Token refresh error: %s", e)
 
+        # ──────────────────────────────────────────────────────────────────
+        # STEP 4: All auth attempts failed - require user reauth
+        # ──────────────────────────────────────────────────────────────────
         # Full re-authentication requires user interaction (MitID app approval)
-        # and cannot be done automatically in the background.
-        _LOGGER.error(
-            "Token refresh failed — manual re-authentication required. "
-            "Please re-configure the Aula integration to log in again."
+        # Cannot be done automatically - device_id, access_token, and refresh_token
+        # are user-specific and time-sensitive.
+        raise ConfigEntryAuthFailed(
+            "Aula session udløbet. Gå til Indstillinger → Integrationer → Aula → Konfigurer for at logge ind igen."
         )
-        return False
 
     def _make_api_url(self, method, **params):
-        """Build API URL (without token — use _auth_headers instead)."""
+        """Build API URL with access_token and device_id as URL query params.
+
+        The Aula API authenticates via ?access_token= in the URL (not Bearer header).
+        This matches the iOS app behaviour captured in the sniffer JSONL.
+
+        Example output:
+            https://www.aula.dk/api/v23/?method=profiles.getProfileContext
+            &deviceId=IOS-private-D22D4696-6913-43A1-A7AB-592903951E6C
+            &access_token=eyJ0eXAi...
+            &portalrole=guardian
+        """
         url = self.apiurl + f"?method={method}"
+
+        # Add deviceId if present
+        if self._device_id and "deviceId" not in params:
+            url += f"&deviceId={self._device_id}"
+
+        # Embed access_token in URL (Aula API requires this, not Bearer header)
+        if self._access_token:
+            url += f"&access_token={self._access_token}"
+
+        # Add additional parameters (filters, options, etc.)
         for key, val in params.items():
             if isinstance(val, list):
+                # Array params: key[]=val1&key[]=val2
                 for v in val:
                     url += f"&{key}[]={v}"
             else:
+                # Single params: key=val
                 url += f"&{key}={val}"
         return url
 
@@ -203,7 +438,20 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         return os.path.join(self._data_dir, filename)
 
     def _auth_headers(self):
-        """Return headers with the access token as a Bearer token."""
+        """Return HTTP headers with access token as Bearer token.
+
+        Access Token Requirement:
+        - Must be valid (not expired) before calling this
+        - _ensure_token_auth() validates and refreshes if needed
+        - Added to Authorization header: Bearer {jwt_token}
+        - Time-limited (~3600s), auto-refreshed by _ensure_token_auth()
+
+        Example header:
+            Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiIsImtpZCI6IjEifQ...
+
+        This is paired with device_id in URL params:
+            ?deviceId=IOS-private-...
+        """
         headers = {}
         if self._access_token:
             headers["Authorization"] = f"Bearer {self._access_token}"
@@ -225,12 +473,7 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self.tokens = {}
 
         # Ensure we have a valid access token
-        have_valid_session = self._ensure_token_auth()
-
-        if not have_valid_session:
-            raise ConfigEntryNotReady(
-                "Authentication failed. Please reconfigure the integration."
-            )
+        self._ensure_token_auth()  # raises ConfigEntryAuthFailed if no valid token
 
         # Ensure post-login setup is done
         if (
@@ -240,7 +483,9 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         ):
             self._setup_post_login()
 
-        # Verify API access with profiles data
+        # Verify API access and refresh profiles data
+        # Uses getprofilesbylogin (lowercase) with portalRoles[]=guardian
+        # — matches the iOS app's second post-auth call exactly
         is_logged_in = False
         if (
             self._session
@@ -249,15 +494,17 @@ class Client(AuthMixin, WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             and self._profiles
         ):
             try:
-                api_url = self._make_api_url("profiles.getProfilesByLogin")
+                api_url = self._make_api_url(
+                    "profiles.getprofilesbylogin",
+                    portalRoles=["guardian"],
+                )
 
                 response = self._session.get(
                     api_url,
-                    headers=self._auth_headers(),
                     verify=True,
                     timeout=10,
                 )
-                data = _safe_json(response, "profiles.getProfilesByLogin")
+                data = _safe_json(response, "profiles.getprofilesbylogin")
                 is_logged_in = data.get("status", {}).get("message") == "OK"
                 if is_logged_in:
                     # Keep profiles fresh

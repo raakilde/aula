@@ -113,6 +113,22 @@ Denne integration behandler personoplysninger i henhold til GDPR (EU 2016/679). 
 - Brug HTTPS og stærke adgangskoder til Home Assistant.
 - Fjern integrationen under **Settings → Integrations** hvis du ikke længere ønsker at bruge den — alle tokens slettes automatisk.
 
+## Sikker opbevaring af tokens og deviceId
+
+Fra og med version X.X.X gemmer integrationen automatisk dine tokens og deviceId i Home Assistants **hemmelige lager** (secret storage). Dette betyder:
+
+- Tokens og deviceId opbevares krypteret og utilgængeligt for andre integrationer eller brugere.
+- Ingen tokens skrives længere til configuration.yaml, config entry eller ukrypterede filer.
+- Ved opdatering eller fornyelse af tokens sker al lagring automatisk og sikkert.
+
+**Du behøver ikke selv gøre noget** — integrationen håndterer alt automatisk.
+
+> Hvis du tidligere har brugt .aula_tokens.json fra sniffer.py, kan du kopiere værdierne ind første gang. Herefter håndteres alt via secret storage.
+
+Se [sniffer.md](sniffer.md) for hvordan du udtrækker tokens/deviceId første gang.
+
+---
+
 ## Support
 
 Har du spørgsmål eller problemer? Opret et [issue på GitHub](https://github.com/raakilde/aula/issues).
@@ -120,3 +136,9 @@ Har du spørgsmål eller problemer? Opret et [issue på GitHub](https://github.c
 ## Licens
 
 Se [LICENSE](LICENSE) for detaljer.
+
+## Udtræk tokens og deviceId med sniffer.py
+
+Hvis du vil bruge eksisterende Aula-session fra mobil-appen, kan du udtrække access_token, refresh_token og deviceId med en sniffer (fx `sniffer.py` baseret på mitmproxy).
+
+Se [sniffer.md](sniffer.md) for guide og eksempler.

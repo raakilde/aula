@@ -4,20 +4,19 @@ Based on https://github.com/JBoye/HA-Aula
 
 import logging
 from datetime import timedelta
+from typing import Any
 
 from homeassistant import config_entries, core
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .client import Client
 from .const import (
-    CONF_AUTH_METHOD,
-    CONF_MITID_USERNAME,
-    CONF_MITID_PASSWORD,
-    CONF_MITID_TOKEN,
     CONF_ACCESS_TOKEN,
+    CONF_DEVICE_ID,
     CONF_REFRESH_TOKEN,
-    CONF_TOKEN_EXPIRES_AT,
     CONF_SCHOOLSCHEDULE,
+    CONF_TOKEN_EXPIRES_AT,
     CONF_UGEPLAN,
     DOMAIN,
 )
@@ -58,56 +57,76 @@ async def async_setup_entry(
 
     ugeplan = config.get(CONF_UGEPLAN, True)
 
-    # Create callback for persisting updated tokens
-    def persist_tokens_callback(updated_tokens):
-        """Callback to persist updated tokens to config entry."""
+    # Persist tokens/deviceId in Home Assistant storage.
+    token_store = Store[dict[str, Any]](hass, 1, "aula_tokens")
+
+    async def persist_tokens_callback(updated_tokens):
+        """Persist updated tokens/deviceId to Home Assistant storage."""
         try:
-            _LOGGER.info("Persisting updated tokens to config entry")
+            await token_store.async_save(updated_tokens)
+            _LOGGER.debug("Successfully persisted updated tokens to storage")
+        except Exception as exc:
+            _LOGGER.error(f"Failed to persist updated tokens to storage: {exc}")
 
-            def _do_update():
-                try:
-                    new_data = dict(config_entry.data)
-                    new_data[CONF_ACCESS_TOKEN] = updated_tokens.get("access_token")
-                    new_data[CONF_REFRESH_TOKEN] = updated_tokens.get("refresh_token")
-                    new_data[CONF_TOKEN_EXPIRES_AT] = updated_tokens.get("expires_at", 0)
-                    hass.config_entries.async_update_entry(
-                        config_entry,
-                        data=new_data,
-                    )
-                    _LOGGER.debug("Successfully persisted updated tokens")
-                except Exception as exc:
-                    _LOGGER.error(f"Failed to persist updated tokens: {exc}")
+    # Load tokens/deviceId from Home Assistant storage
+    stored_tokens = await token_store.async_load() or {}
 
-            hass.loop.call_soon_threadsafe(_do_update)
-        except Exception as e:
-            _LOGGER.error(f"Failed to schedule token persistence: {e}")
+    # Always prefer tokens from entry.data — __init__.py just validated/refreshed
+    # them so they are fresher than anything in the store. This prevents the client
+    # from starting with stale tokens when a refresh happened during setup.
+    entry_access = config_entry.data.get(CONF_ACCESS_TOKEN)
+    entry_refresh = config_entry.data.get(CONF_REFRESH_TOKEN)
+    if entry_access and entry_refresh:
+        stored_tokens[CONF_ACCESS_TOKEN] = entry_access
+        stored_tokens[CONF_REFRESH_TOKEN] = entry_refresh
+        if config_entry.data.get(CONF_TOKEN_EXPIRES_AT):
+            stored_tokens[CONF_TOKEN_EXPIRES_AT] = config_entry.data[
+                CONF_TOKEN_EXPIRES_AT
+            ]
+            stored_tokens["expires_at"] = config_entry.data[CONF_TOKEN_EXPIRES_AT]
+        stored_tokens[CONF_DEVICE_ID] = config_entry.data.get(
+            CONF_DEVICE_ID, stored_tokens.get(CONF_DEVICE_ID)
+        )
+        await token_store.async_save(stored_tokens)
+        _LOGGER.debug("Synced fresh tokens from config entry to token store")
 
-    # Read sensitive credentials from config_entry.data directly,
-    # not from hass.data which is filtered to safe keys only
-    entry_data = config_entry.data
-    stored_tokens = {
-        "access_token": entry_data.get(CONF_ACCESS_TOKEN),
-        "refresh_token": entry_data.get(CONF_REFRESH_TOKEN),
-        "expires_at": entry_data.get(CONF_TOKEN_EXPIRES_AT, 0),
-    }
+    device_id = stored_tokens.get("device_id")
+
     client = Client(
         config.get(CONF_SCHOOLSCHEDULE, True),
         config.get(CONF_UGEPLAN, True),
-        auth_method=entry_data.get(CONF_AUTH_METHOD),
-        mitid_username=entry_data.get(CONF_MITID_USERNAME),
-        mitid_password=entry_data.get(CONF_MITID_PASSWORD),
-        mitid_token=entry_data.get(CONF_MITID_TOKEN),
         stored_tokens=stored_tokens,
         token_persist_callback=persist_tokens_callback,
         hass=hass,
         config_entry=config_entry,
+        device_id=device_id,
     )
 
     hass.data[DOMAIN]["client"] = client
 
     async def async_update_data():
+        """Fetch data following post-auth initialization sequence.
+
+        Mirrors the iOS app post-auth flow:
+        1. profiles.getProfileContext (widgets)
+        2. profiles.getprofilesbylogin (children/profiles)
+        3. notifications.registerDevice
+        4. configuration methods
+        5. notifications.getNotificationsForActiveProfile
+        6. posts.getAllPosts
+        """
         client = hass.data[DOMAIN]["client"]
-        await hass.async_add_executor_job(client.update_data)
+        _LOGGER.debug("Aula: Starting post-auth initialization sequence")
+        try:
+            await hass.async_add_executor_job(client.update_data)
+            _LOGGER.debug(
+                "Aula: Post-auth flow complete - children=%d, widgets=%d",
+                len(getattr(client, "_children", [])),
+                len(getattr(client, "widgets", {})),
+            )
+        except Exception as err:
+            _LOGGER.error("Aula: Post-auth initialization failed: %s", err)
+            raise
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -115,9 +134,10 @@ async def async_setup_entry(
         name="sensor",
         update_method=async_update_data,
         update_interval=timedelta(minutes=30),
+        config_entry=config_entry,
     )
 
-    # Immediate refresh
+    # Immediate refresh (non-fatal in platform setup)
     await coordinator.async_request_refresh()
 
     entities = []
@@ -126,12 +146,16 @@ async def async_setup_entry(
     # Get available widgets (populated during coordinator refresh)
     available_widgets = getattr(client, "widgets", {})
     _LOGGER.debug(
-        f"Available widgets for institution: {list(available_widgets.keys())}"
+        "Aula: Available widgets detected: %s",
+        list(available_widgets.keys()) if available_widgets else "none",
     )
 
     if not getattr(client, "_children", []):
         _LOGGER.warning(
-            "No children data available - authentication may have failed. "
+            "Aula: No children data available after post-auth initialization. "
+            "This may indicate: (1) authentication failed, (2) device_id mismatch, "
+            "(3) network timeout, or (4) API version issue. "
+            "Check logs for API version and refresh token status. "
             "Entities will be created on next successful refresh."
         )
         async_add_entities([], update_before_add=True)
@@ -139,7 +163,7 @@ async def async_setup_entry(
 
     for i, child in enumerate(client._children):
         child_id = str(child["id"])
-        child_name = client._childnames[child["id"]].split()[0]
+        # child_name = client._childnames[child["id"]].split()[0]  # unused
         institution_type = getattr(client, "_institution_types", {}).get(
             child["id"], "unknown"
         )

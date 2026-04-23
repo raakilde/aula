@@ -1,47 +1,49 @@
 {
   "config": {
     "error": {
-      "1": "Unknown error",
-      "2": "Unknown error",
-      "auth_failed": "MitID authentication failed. Please try again."
+      "invalid_token": "Access token or refresh token is invalid. Please try again with fresh tokens from the sniffer."
     },
     "step": {
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "Paste new OAuth2 tokens to restore your Aula session.",
+        "data": {
+          "access_token": "Access Token",
+          "refresh_token": "Refresh Token",
+          "device_id": "Device ID"
+        }
+      },
       "user": {
         "title": "Aula Setup",
-        "description": "Enter your MitID username to begin authentication.",
+        "description": "Paste the OAuth2 tokens obtained from the Aula app via the sniffer tool.",
         "data": {
-          "mitid_username": "MitID Username",
-          "mitid_use_token": "Use TOKEN authentication (instead of APP)",
+          "access_token": "Access Token",
+          "refresh_token": "Refresh Token",
+          "device_id": "Device ID",
           "schoolschedule": "Add school schedules as calendar entities?",
           "ugeplan": "Add ugeplaner as sensor attributes?"
         }
-      },
-      "token_credentials": {
-        "title": "MitID Token Credentials",
-        "description": "Enter your MitID password and token code for TOKEN authentication.",
-        "data": {
-          "mitid_password": "MitID Password",
-          "mitid_token": "MitID Token Code"
-        }
-      },
-      "authenticate": {
-        "title": "MitID Authentication",
-        "description": "Approve the login request in your MitID app..."
       }
     },
     "abort": {
-      "auth_failed": "MitID authentication failed. Please try again."
+      "already_configured": "Aula is already configured.",
+      "reauth_successful": "Re-authentication completed successfully."
     }
   },
   "options": {
+    "error": {
+      "invalid_token": "Token is invalid or expired. Please try again."
+    },
     "step": {
       "reauth": {
         "title": "Re-authenticate",
-        "description": "Re-authenticate with MitID for user {username}."
+        "description": "Paste new OAuth2 tokens to refresh your Aula session.",
+        "data": {
+          "access_token": "Access Token",
+          "refresh_token": "Refresh Token",
+          "device_id": "Device ID"
+        }
       }
-    },
-    "error": {
-      "update_failed": "Failed to update. Please try again."
     }
   },
   "entity": {
