@@ -19,3 +19,11 @@ venv
 *config*.json
 updated_cookies.json
 uddannelseopgaveliste.json
+
+# Sniffer/runtime artifacts
+custom_components/aula/aula_auth/.aula_tokens.json
+custom_components/aula/aula_auth/.aula_tokens.json_old
+custom_components/aula/aula_auth/updated_cookies.json
+custom_components/aula/aula_auth/updated_cookies.json_old
+custom_components/aula/aula_auth/aula_flow_after_auth.jsonl
+custom_components/aula/aula_auth/aula_flow_after_auth.jsonl_init
