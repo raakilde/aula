@@ -49,6 +49,8 @@ def _test_token(access_token: str, device_id: str | None = None) -> bool:
             )
             if device_id:
                 url += f"&deviceId={device_id}"
+            if access_token:
+                url += f"&access_token={access_token}"
 
             _LOGGER.debug(
                 "Testing token against API v%s (device_id=%s, token_len=%d)",
@@ -62,10 +64,7 @@ def _test_token(access_token: str, device_id: str | None = None) -> bool:
             try:
                 response = requests.get(
                     url,
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Accept": "application/json",
-                    },
+                    headers={"Accept": "application/json"},
                     timeout=15,
                 )
                 if response.status_code == 200:

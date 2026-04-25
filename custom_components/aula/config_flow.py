@@ -237,13 +237,12 @@ class AulaCustomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 url = f"{API}{version}/?method=profiles.getProfileContext&portalrole=guardian"
                 if device_id:
                     url += f"&deviceId={device_id}"
+                if access_token:
+                    url += f"&access_token={access_token}"
 
                 r = requests.get(
                     url,
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Accept": "application/json",
-                    },
+                    headers={"Accept": "application/json"},
                     timeout=15,
                 )
                 if r.status_code == 200:

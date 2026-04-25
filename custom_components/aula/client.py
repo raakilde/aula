@@ -1,5 +1,5 @@
 """
-Aula client with MitID authentication
+Aula client implementation
 Based on https://github.com/JBoye/HA-Aula
 
 This is the main orchestrator that composes functionality from:
@@ -262,7 +262,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         2. Check if access_token still valid (5 min buffer before actual expiry)
         3. If expired: Use refresh_token to get new access_token (OAuth2 grant)
         4. If no refresh_token: Raise ConfigEntryAuthFailed (user must reauth)
-        5. Store self._access_token for Authorization header in API calls
+        5. Store self._access_token for URL access_token API calls
 
         Device ID:
         - Always included in API URL params (self._device_id)
@@ -304,14 +304,14 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         # ──────────────────────────────────────────────────────────────────
         # STEP 3: Access token expired, try refresh (simple HTTP POST)
         # ──────────────────────────────────────────────────────────────────
-        # No MitID approval needed - refresh_token is long-lived (~30 days)
+        # No user interaction needed - refresh_token is long-lived (~30 days)
         if refresh_token:
             _LOGGER.debug("Access token expired, attempting refresh...")
             try:
                 # ──────────────────────────────────────────────────────────────────
                 # STEP 3a: POST to OAuth token endpoint with refresh_token grant
                 # ──────────────────────────────────────────────────────────────────
-                # No MitID needed - refresh_token is long-lived (~30 days)
+                # No user interaction needed - refresh_token is long-lived (~30 days)
                 # Returns new access_token with fresh expiry
                 r = self._session.post(
                     OAUTH_TOKEN_URL,
@@ -393,7 +393,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         # ──────────────────────────────────────────────────────────────────
         # STEP 4: All auth attempts failed - require user reauth
         # ──────────────────────────────────────────────────────────────────
-        # Full re-authentication requires user interaction (MitID app approval)
+        # Full re-authentication requires user interaction
         # Cannot be done automatically - device_id, access_token, and refresh_token
         # are user-specific and time-sensitive.
         raise ConfigEntryAuthFailed(
@@ -438,24 +438,12 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         return os.path.join(self._data_dir, filename)
 
     def _auth_headers(self):
-        """Return HTTP headers with access token as Bearer token.
+        """Return compatibility headers for mixins.
 
-        Access Token Requirement:
-        - Must be valid (not expired) before calling this
-        - _ensure_token_auth() validates and refreshes if needed
-        - Added to Authorization header: Bearer {jwt_token}
-        - Time-limited (~3600s), auto-refreshed by _ensure_token_auth()
-
-        Example header:
-            Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiIsImtpZCI6IjEifQ...
-
-        This is paired with device_id in URL params:
-            ?deviceId=IOS-private-...
+        Aula API auth is performed via URL query params in _make_api_url().
+        This helper is kept to avoid breaking mixins that still pass headers.
         """
-        headers = {}
-        if self._access_token:
-            headers["Authorization"] = f"Bearer {self._access_token}"
-        return headers
+        return {"Accept": "application/json"}
 
     def update_data(self):
         # Rate limiting: prevent multiple rapid data fetches within 30 seconds
@@ -575,10 +563,10 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self._daily_overview = {}
         for i, child in enumerate(self._children):
             response = self._session.get(
-                self.apiurl
-                + "?method=presence.getDailyOverview&childIds[]="
-                + str(child["id"]),
-                headers=self._auth_headers(),
+                self._make_api_url(
+                    "presence.getDailyOverview",
+                    childIds=[str(child["id"])],
+                ),
                 verify=True,
             )
             data = _safe_json(
@@ -615,9 +603,12 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 "OLD MESSAGES: About to call messaging.getThreads (page 0 only)..."
             )
             mesres = self._session.get(
-                self.apiurl
-                + "?method=messaging.getThreads&sortOn=date&orderDirection=desc&page=0",
-                headers=self._auth_headers(),
+                self._make_api_url(
+                    "messaging.getThreads",
+                    sortOn="date",
+                    orderDirection="desc",
+                    page=0,
+                ),
                 verify=True,
             )
             _LOGGER.debug(f"OLD MESSAGES: Response status: {mesres.status_code}")
@@ -641,17 +632,17 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         try:
             if unread == 1:
                 threadres = self._session.get(
-                    self.apiurl
-                    + "?method=messaging.getMessagesForThread&threadId="
-                    + str(threadid)
-                    + "&page=0",
-                    headers=self._auth_headers(),
+                    self._make_api_url(
+                        "messaging.getMessagesForThread",
+                        threadId=threadid,
+                        page=0,
+                    ),
                     verify=True,
                 )
                 threaddata = _safe_json(threadres, "messaging.getMessagesForThread")
                 if threaddata["status"]["code"] == 403:
                     self.message["text"] = (
-                        "Log ind på Aula med MitID for at læse denne besked."
+                        "Log ind på Aula for at læse denne besked."
                     )
                     self.message["sender"] = "Ukendt afsender"
                     self.message["subject"] = "Følsom besked"
@@ -690,11 +681,10 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         _LOGGER.debug("OLD MESSAGES: Section completed, continuing to Calendar...")
 
         # Calendar:
-        if self._schoolschedule == True:
+        if self._schoolschedule:
             instProfileIds = ",".join(self._childids)
             csrf_token = self._session.cookies.get_dict().get("Csrfp-Token", "")
             headers = {
-                **self._auth_headers(),
                 "csrfp-token": csrf_token,
                 "content-type": "application/json",
             }
@@ -716,7 +706,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             )
             _LOGGER.debug("Fetching calendars...")
             res = self._session.post(
-                self.apiurl + "?method=calendar.getEventsByProfileIdsAndResourceIds",
+                self._make_api_url("calendar.getEventsByProfileIdsAndResourceIds"),
                 data=post_data,
                 headers=headers,
                 verify=True,
@@ -758,7 +748,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     + "&coverImageHeight=160&widgetVersion=1.6"
                     + "&userProfile=guardian"
                     + "&sessionUUID="
-                    + "mitid_user",
+                    + "aula_guardian",
                     headers={"Authorization": token, "accept": "application/json"},
                     verify=True,
                 )
@@ -827,7 +817,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         thisweek,
                         self._childuserids,
                         self._institutionProfiles,
-                        "mitid_user",
+                        "aula_guardian",
                     )
                     self.forloebnext = self._minUddannelse.forloeb(
                         self._session,
@@ -835,7 +825,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         nextweek,
                         self._childuserids,
                         self._institutionProfiles,
-                        "mitid_user",
+                        "aula_guardian",
                     )
         # End of Min Uddannelse Forløb
 
@@ -868,7 +858,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         week,
                         self._childuserids,
                         self._institutionProfiles,
-                        "mitid_user",
+                        "aula_guardian",
                     )
 
                     # Currently only one student supported
@@ -917,7 +907,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             thisweek,
                             self._childuserids,
                             self._institutionProfiles,
-                            "mitid_user",
+                            "aula_guardian",
                         )
                     except Exception:
                         self.ugenotethisweek = {}
@@ -929,7 +919,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             nextweek,
                             self._childuserids,
                             self._institutionProfiles,
-                            "mitid_user",
+                            "aula_guardian",
                         )
                     except Exception:
                         self.ugenotenextweek = {}
@@ -940,9 +930,9 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         if self._ugeplan is True:
             guardian = _safe_json(
                 self._session.get(
-                    self.apiurl
-                    + "?method=profiles.getProfileContext&portalrole=guardian",
-                    headers=self._auth_headers(),
+                    self._make_api_url(
+                        "profiles.getProfileContext", portalrole="guardian"
+                    ),
                     verify=True,
                 ),
                 "profiles.getProfileContext",
@@ -980,8 +970,6 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 )
 
             def ugeplan(week, thisnext):
-                ugeplan_data_found = False
-
                 if "0029" in self.widgets:
                     token = self.get_token("0029")
                     get_payload = (
@@ -1005,7 +993,6 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             self.ugep_attr[person["navn"].split()[0]] = ugeplan
                         elif thisnext == "next":
                             self.ugepnext_attr[person["navn"].split()[0]] = ugeplan
-                        ugeplan_data_found = True
 
                 if "0062" in self.widgets:
                     _LOGGER.debug("In the Huskelisten flow...")
@@ -1037,7 +1024,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         + "&dueNoLaterThan="
                         + dueNoLaterThan
                         + "&widgetVersion=1.10&userProfile=guardian&sessionId="
-                        + "mitid_user"
+                        + "aula_guardian"
                         + "&institutions="
                         + institutions
                     )
@@ -1109,7 +1096,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         "dnt": "1",
                         "origin": "https://www.aula.dk",
                         "referer": "https://www.aula.dk/",
-                        "sessionuuid": "mitid_session",
+                        "sessionuuid": "aula_session",
                         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36",
                         "x-version": "1.0",
                     }
