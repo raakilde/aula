@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from homeassistant import config_entries, core
 from homeassistant.components.calendar import (
@@ -15,6 +16,93 @@ _LOGGER = logging.getLogger(__name__)
 
 MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=30)
 PARALLEL_UPDATES = 1
+
+
+class _CalendarFileCache:
+    """Cache parsed school schedule events across calendar entities."""
+
+    _path: str | None = None
+    _mtime: float | None = None
+    _events_by_child: dict[int, list[CalendarEvent]] = {}
+
+    @classmethod
+    def get_events(cls, path: str) -> dict[int, list[CalendarEvent]] | None:
+        import json
+
+        file_path = Path(path)
+        try:
+            stat = file_path.stat()
+        except OSError as err:
+            _LOGGER.warning("Could not access skoleskema.json: %s", err)
+            return None
+
+        if cls._path == path and cls._mtime == stat.st_mtime:
+            return cls._events_by_child
+
+        try:
+            with file_path.open("r") as openfile:
+                raw_data = json.load(openfile)
+            data = json.loads(raw_data)
+        except (OSError, json.JSONDecodeError, ValueError) as err:
+            _LOGGER.warning("Could not open and parse file skoleskema.json: %s", err)
+            return None
+
+        events_by_child: dict[int, list[CalendarEvent]] = {}
+        for calendar_entry in data.get("data", []):
+            if calendar_entry.get("type") != "lesson":
+                continue
+
+            belongs_to = calendar_entry.get("belongsToProfiles") or []
+            if not belongs_to:
+                continue
+
+            child_id = belongs_to[0]
+            summary = calendar_entry["title"]
+            start = datetime.strptime(
+                calendar_entry["startDateTime"], "%Y-%m-%dT%H:%M:%S%z"
+            )
+            end = datetime.strptime(
+                calendar_entry["endDateTime"], "%Y-%m-%dT%H:%M:%S%z"
+            )
+
+            teacher = ""
+            for participant in calendar_entry["lesson"]["participants"]:
+                if participant["participantRole"] == "substituteTeacher":
+                    teacher = "VIKAR: " + participant["teacherName"]
+                    break
+
+            if not teacher:
+                try:
+                    teacher = calendar_entry["lesson"]["participants"][0][
+                        "teacherInitials"
+                    ]
+                except (KeyError, IndexError, TypeError):
+                    try:
+                        _LOGGER.debug(
+                            "Lesson json dump%s", str(calendar_entry["lesson"])
+                        )
+                        teacher = calendar_entry["lesson"]["participants"][0][
+                            "teacherName"
+                        ]
+                    except (KeyError, IndexError, TypeError):
+                        _LOGGER.debug(
+                            "Could not find any teacher information for %s at %s",
+                            summary,
+                            start,
+                        )
+
+            event = CalendarEvent(
+                summary=summary + ", " + teacher,
+                start=start,
+                end=end,
+            )
+            events_by_child.setdefault(child_id, []).append(event)
+
+        cls._path = path
+        cls._mtime = stat.st_mtime
+        cls._events_by_child = events_by_child
+        _LOGGER.debug("Reloaded skoleskema.json into shared calendar cache")
+        return events_by_child
 
 
 async def async_setup_entry(
@@ -85,50 +173,12 @@ class CalendarData:
         self._client = hass.data[DOMAIN]["client"]
 
     def parseCalendarData(self, i=None):
-        import json
-
-        try:
-            with open(self._client._data_path("skoleskema.json"), "r") as openfile:
-                _data = json.load(openfile)
-            data = json.loads(_data)
-        except (OSError, json.JSONDecodeError, ValueError) as e:
-            _LOGGER.warning("Could not open and parse file skoleskema.json: %s", e)
+        events_by_child = _CalendarFileCache.get_events(
+            self._client._data_path("skoleskema.json")
+        )
+        if events_by_child is None:
             return False
-        events = []
-        _LOGGER.debug("Parsing skoleskema.json...")
-        for c in data["data"]:
-            if c["type"] == "lesson" and c["belongsToProfiles"][0] == self._childid:
-                summary = c["title"]
-                start = datetime.strptime(c["startDateTime"], "%Y-%m-%dT%H:%M:%S%z")
-                end = datetime.strptime(c["endDateTime"], "%Y-%m-%dT%H:%M:%S%z")
-                vikar = 0
-                for p in c["lesson"]["participants"]:
-                    if p["participantRole"] == "substituteTeacher":
-                        teacher = "VIKAR: " + p["teacherName"]
-                        vikar = 1
-                        break
-                if vikar == 0:
-                    try:
-                        teacher = c["lesson"]["participants"][0]["teacherInitials"]
-                    except (KeyError, IndexError, TypeError):
-                        try:
-                            _LOGGER.debug("Lesson json dump" + str(c["lesson"]))
-                            teacher = c["lesson"]["participants"][0]["teacherName"]
-                        except (KeyError, IndexError, TypeError):
-                            _LOGGER.debug(
-                                "Could not find any teacher information for "
-                                + summary
-                                + " at "
-                                + str(start)
-                            )
-                            teacher = ""
-                event = CalendarEvent(
-                    summary=summary + ", " + teacher,
-                    start=start,
-                    end=end,
-                )
-                events.append(event)
-        return events
+        return events_by_child.get(self._childid, [])
 
     async def async_get_events(self, hass, start_date, end_date):
         events = self.parseCalendarData()
@@ -136,5 +186,4 @@ class CalendarData:
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
     def update(self):
-        _LOGGER.debug("Updating calendars...")
-        self.parseCalendarData(self)
+        self.all_events = self.parseCalendarData(self) or []

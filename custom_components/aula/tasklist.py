@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from homeassistant.components.calendar import (
@@ -15,6 +16,65 @@ _LOGGER = logging.getLogger(__name__)
 
 MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=30)
 PARALLEL_UPDATES = 1
+
+
+class _TaskListFileCache:
+    """Cache parsed task list events across task list entities."""
+
+    _path: str | None = None
+    _mtime: float | None = None
+    _events: list[CalendarEvent] = []
+
+    @classmethod
+    def get_events(cls, path: str) -> list[CalendarEvent] | None:
+        file_path = Path(path)
+        try:
+            stat = file_path.stat()
+        except OSError as err:
+            _LOGGER.warning("Could not access uddannelseopgaveliste.json: %s", err)
+            return None
+
+        if cls._path == path and cls._mtime == stat.st_mtime:
+            return cls._events
+
+        try:
+            with file_path.open("r") as openfile:
+                tasks = json.load(openfile)
+        except (OSError, json.JSONDecodeError, ValueError) as err:
+            _LOGGER.warning(
+                "Could not open and parse file uddannelseopgaveliste.json: %s", err
+            )
+            return None
+
+        events: list[CalendarEvent] = []
+        for task in tasks:
+            end = datetime.strptime(
+                task["afleveringsdato"], "%Y-%m-%dT%H:%M:%S.%f0"
+            ).replace(tzinfo=ZoneInfo("Europe/Berlin"), hour=8, minute=5)
+            start = end - timedelta(minutes=5)
+
+            if task["placeringTidspunkt"] is not None:
+                start = datetime.strptime(
+                    task["placeringTidspunkt"], "%Y-%m-%dT%H:%M:%S.%f0"
+                ).replace(tzinfo=ZoneInfo("Europe/Berlin"))
+                end = start + timedelta(seconds=1)
+
+            try:
+                events.append(
+                    CalendarEvent(
+                        summary=task["title"],
+                        start=start,
+                        end=end,
+                    )
+                )
+            except (ValueError, TypeError) as err:
+                _LOGGER.warning("Failed to create calendar event: %s", err)
+
+        cls._path = path
+        cls._mtime = stat.st_mtime
+        cls._events = events
+        _LOGGER.debug("Reloaded uddannelseopgaveliste.json into shared task cache")
+        return events
 
 
 class TaskListDevice(CalendarEntity):
@@ -62,39 +122,11 @@ class TaskListData:
         self._client = hass.data[DOMAIN]["client"]
 
     def parseTaskListData(self, i=None):
-        events = {}
-
-        try:
-            with open(self._client._data_path("uddannelseopgaveliste.json"), "r") as openfile:
-                tasks = json.load(openfile)
-        except (OSError, json.JSONDecodeError, ValueError) as e:
-            _LOGGER.warning("Could not open and parse file uddannelseopgaveliste.json: %s", e)
+        events = _TaskListFileCache.get_events(
+            self._client._data_path("uddannelseopgaveliste.json")
+        )
+        if events is None:
             return False
-        events = []
-        _LOGGER.debug("Parsing skoleskema.json...")
-        for task in tasks:
-            end = datetime.strptime(
-                task["afleveringsdato"], "%Y-%m-%dT%H:%M:%S.%f0"
-            ).replace(tzinfo=ZoneInfo("Europe/Berlin"), hour=8, minute=5)
-            start = end - timedelta(minutes=5)
-
-            if task["placeringTidspunkt"] is not None:
-                start = datetime.strptime(
-                    task["placeringTidspunkt"], "%Y-%m-%dT%H:%M:%S.%f0"
-                ).replace(tzinfo=ZoneInfo("Europe/Berlin"))
-                end = start + timedelta(seconds=1)
-
-            summary = task["title"]
-            try:
-                event = CalendarEvent(
-                    summary=summary,
-                    start=start,
-                    end=end,
-                )
-                events.append(event)
-            except (ValueError, TypeError) as e:
-                _LOGGER.warning("Failed to create calendar event: %s", e)
-
         return events
 
     async def async_get_events(self, hass, start_date, end_date):
@@ -103,5 +135,4 @@ class TaskListData:
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
     def update(self):
-        _LOGGER.debug("Updating calendars...")
-        self.parseTaskListData(self)
+        self.all_events = self.parseTaskListData(self) or []

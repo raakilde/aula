@@ -253,6 +253,8 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self._institutionProfiles = []
         self._institutionProfileIdsList = []
         self._daily_overview = {}
+        # Per-section refresh control to avoid polling slow-changing data too often.
+        self._section_refresh_at = {}
 
     def _ensure_token_auth(self):
         """Ensure we have a valid access token for API calls.
@@ -445,6 +447,15 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         """
         return {"Accept": "application/json"}
 
+    def _should_refresh_section(self, section: str, min_interval_seconds: int) -> bool:
+        """Return True when a data section should be refreshed now."""
+        now = time.time()
+        last = self._section_refresh_at.get(section, 0)
+        if now - last >= min_interval_seconds:
+            self._section_refresh_at[section] = now
+            return True
+        return False
+
     def update_data(self):
         # Rate limiting: prevent multiple rapid data fetches within 30 seconds
         current_time = time.time()
@@ -595,7 +606,8 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self._get_presence_templates()
 
         # Closed Days (Institution holidays):
-        self._get_closed_days()
+        if self._should_refresh_section("closed_days", 6 * 60 * 60):
+            self._get_closed_days()
 
         # Messages:
         try:
@@ -682,42 +694,43 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
 
         # Calendar:
         if self._schoolschedule:
-            instProfileIds = ",".join(self._childids)
-            csrf_token = self._session.cookies.get_dict().get("Csrfp-Token", "")
-            headers = {
-                "csrfp-token": csrf_token,
-                "content-type": "application/json",
-            }
-            start = datetime.datetime.now(datetime.timezone.utc).strftime(
-                "%Y-%m-%d 00:00:00.0000%z"
-            )
-            _end = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
-                days=14
-            )
-            end = _end.strftime("%Y-%m-%d 00:00:00.0000%z")
-            post_data = (
-                '{"instProfileIds":['
-                + instProfileIds
-                + '],"resourceIds":[],"start":"'
-                + start
-                + '","end":"'
-                + end
-                + '"}'
-            )
-            _LOGGER.debug("Fetching calendars...")
-            res = self._session.post(
-                self._make_api_url("calendar.getEventsByProfileIdsAndResourceIds"),
-                data=post_data,
-                headers=headers,
-                verify=True,
-            )
-            try:
-                _path = self._data_path("skoleskema.json")
-                fd = os.open(_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "w") as skoleskema_json:
-                    json.dump(res.text, skoleskema_json)
-            except (OSError, ValueError) as e:
-                _LOGGER.warning("Failed to write skoleskema.json: %s", e)
+            if self._should_refresh_section("calendar", 2 * 60 * 60):
+                instProfileIds = ",".join(self._childids)
+                csrf_token = self._session.cookies.get_dict().get("Csrfp-Token", "")
+                headers = {
+                    "csrfp-token": csrf_token,
+                    "content-type": "application/json",
+                }
+                start = datetime.datetime.now(datetime.timezone.utc).strftime(
+                    "%Y-%m-%d 00:00:00.0000%z"
+                )
+                _end = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+                    days=14
+                )
+                end = _end.strftime("%Y-%m-%d 00:00:00.0000%z")
+                post_data = (
+                    '{"instProfileIds":['
+                    + instProfileIds
+                    + '],"resourceIds":[],"start":"'
+                    + start
+                    + '","end":"'
+                    + end
+                    + '"}'
+                )
+                _LOGGER.debug("Fetching calendars...")
+                res = self._session.post(
+                    self._make_api_url("calendar.getEventsByProfileIdsAndResourceIds"),
+                    data=post_data,
+                    headers=headers,
+                    verify=True,
+                )
+                try:
+                    _path = self._data_path("skoleskema.json")
+                    fd = os.open(_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    with os.fdopen(fd, "w") as skoleskema_json:
+                        json.dump(res.text, skoleskema_json)
+                except (OSError, ValueError) as e:
+                    _LOGGER.warning("Failed to write skoleskema.json: %s", e)
         # End of calendar
 
         # Bibliotek:
@@ -726,68 +739,76 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             itype != "kindergarten" for itype in self._institution_types.values()
         )
         if has_school_children:
-            if len(self.widgets) == 0:
-                self.get_widgets()
+            if self._should_refresh_section("library", 6 * 60 * 60):
+                if len(self.widgets) == 0:
+                    self.get_widgets()
 
-            _LOGGER.debug(
-                f"Fetching library data (bibliotek flag: {self._bibliotek}, "
-                f"widget 0019 available: {'0019' in self.widgets}, "
-                f"institution types: {self._institution_types})"
-            )
-
-            try:
-                token = self.get_token("0019")
-
-                response = self._session.get(
-                    CICERO_API
-                    + "/portal-api/rest/aula/library/status/v3?"
-                    + "institutions="
-                    + "&institutions=".join(self._institutionProfiles)
-                    + "&children="
-                    + "&children=".join(self._childuserids)
-                    + "&coverImageHeight=160&widgetVersion=1.6"
-                    + "&userProfile=guardian"
-                    + "&sessionUUID="
-                    + "aula_guardian",
-                    headers={"Authorization": token, "accept": "application/json"},
-                    verify=True,
+                _LOGGER.debug(
+                    f"Fetching library data (bibliotek flag: {self._bibliotek}, "
+                    f"widget 0019 available: {'0019' in self.widgets}, "
+                    f"institution types: {self._institution_types})"
                 )
 
-                if response.status_code != 200:
-                    _LOGGER.warning(
-                        f"Library API returned status {response.status_code}"
+                try:
+                    token = self.get_token("0019")
+
+                    response = self._session.get(
+                        CICERO_API
+                        + "/portal-api/rest/aula/library/status/v3?"
+                        + "institutions="
+                        + "&institutions=".join(self._institutionProfiles)
+                        + "&children="
+                        + "&children=".join(self._childuserids)
+                        + "&coverImageHeight=160&widgetVersion=1.6"
+                        + "&userProfile=guardian"
+                        + "&sessionUUID="
+                        + "aula_guardian",
+                        headers={"Authorization": token, "accept": "application/json"},
+                        verify=True,
                     )
+
+                    if response.status_code != 200:
+                        _LOGGER.warning(
+                            f"Library API returned status {response.status_code}"
+                        )
+                        self.loaned_books = {}
+                    else:
+                        books = response.json()
+
+                        self.loaned_books = {}
+                        for loaned_book in books["loans"]:
+                            book = {
+                                "Title": loaned_book["title"],
+                                "Author": loaned_book["author"],
+                                "DueDate": loaned_book["dueDate"],
+                                "NumberOfLoans": loaned_book["numberOfLoans"],
+                                "Cover": str(loaned_book["coverImageUrl"]).strip(),
+                            }
+
+                            if (
+                                loaned_book["patronDisplayName"]
+                                not in self.loaned_books
+                            ):
+                                self.loaned_books[loaned_book["patronDisplayName"]] = []
+
+                            self.loaned_books[loaned_book["patronDisplayName"]].append(
+                                book
+                            )
+
+                        _LOGGER.debug(
+                            f"Library books loaded. {len(self.loaned_books)} patron(s), "
+                            f"{len(self._childnames)} child(ren) registered"
+                        )
+                except Exception as e:
+                    _LOGGER.warning(f"Failed to fetch library data: {e}")
                     self.loaned_books = {}
-                else:
-                    books = response.json()
-
-                    self.loaned_books = {}
-                    for loaned_book in books["loans"]:
-                        book = {
-                            "Title": loaned_book["title"],
-                            "Author": loaned_book["author"],
-                            "DueDate": loaned_book["dueDate"],
-                            "NumberOfLoans": loaned_book["numberOfLoans"],
-                            "Cover": str(loaned_book["coverImageUrl"]).strip(),
-                        }
-
-                        if loaned_book["patronDisplayName"] not in self.loaned_books:
-                            self.loaned_books[loaned_book["patronDisplayName"]] = []
-
-                        self.loaned_books[loaned_book["patronDisplayName"]].append(book)
-
-                    _LOGGER.debug(
-                        f"Library books loaded. {len(self.loaned_books)} patron(s), "
-                        f"{len(self._childnames)} child(ren) registered"
-                    )
-            except Exception as e:
-                _LOGGER.warning(f"Failed to fetch library data: {e}")
-                self.loaned_books = {}
 
         # End of bibliotek
 
         # Min Uddannelse Forløb:
-        if self._minUddannelseForloeb is True:
+        if self._minUddannelseForloeb is True and self._should_refresh_section(
+            "minuddannelse_forloeb", 6 * 60 * 60
+        ):
             if len(self.widgets) == 0:
                 self.get_widgets()
 
@@ -830,7 +851,9 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         # End of Min Uddannelse Forløb
 
         # Min Uddannelse Opgave Liste
-        if self._minUddannelseOpgaveListe is True:
+        if self._minUddannelseOpgaveListe is True and self._should_refresh_section(
+            "minuddannelse_opgaveliste", 6 * 60 * 60
+        ):
             if len(self.widgets) == 0:
                 self.get_widgets()
 
@@ -876,7 +899,9 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         # End of Min Uddannelse Opgave Liste
 
         # Min Uddannelse Uge Note
-        if self._minUddannelseUgeNote is True:
+        if self._minUddannelseUgeNote is True and self._should_refresh_section(
+            "minuddannelse_ugenote", 6 * 60 * 60
+        ):
             if len(self.widgets) == 0:
                 self.get_widgets()
             if "0028" not in self.widgets:
@@ -927,7 +952,9 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         # End of Min Uddannelse Uge Note
 
         # Ugeplaner:
-        if self._ugeplan is True:
+        if self._ugeplan is True and self._should_refresh_section(
+            "ugeplan", 6 * 60 * 60
+        ):
             guardian = _safe_json(
                 self._session.get(
                     self._make_api_url(
