@@ -13,6 +13,7 @@ venv
 *.csv
 *.xml
 *test*.py
+!/tests/test_widget_regressions.py
 *debug*.py
 *sample*.json
 *skoleskema*.json

@@ -32,6 +32,7 @@ from .mail import MailMixin
 from .minuddannelse import MinUddannelse
 from .posts import PostsMixin
 from .presence import PresenceMixin
+from .widget_auth import widget_guardian
 from .widgets import WidgetsMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -123,12 +124,12 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     and profile_context["data"]
                     and "institutionProfile" in profile_context["data"]
                 ):
-                    _LOGGER.info("Successfully retrieved profile context")
+                    _LOGGER.debug("Successfully retrieved profile context")
                 else:
                     _LOGGER.warning("Profile context response missing expected data")
 
             except Exception as e:
-                _LOGGER.error(f"Failed to get profile context: {e}")
+                _LOGGER.warning(f"Failed to get profile context: {e}")
 
             # Step 2: getprofilesbylogin — children/profiles (second call in iOS post-auth)
             # Note: method name is all-lowercase and requires portalRoles[]=guardian
@@ -235,6 +236,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
         self._ugeplan = ugeplan
         # Widget-based features now auto-detected from API
         self._bibliotek = None  # Auto-detected
+        self.library_available = False
         self._minUddannelseForloeb = None  # Auto-detected
         self._minUddannelseOpgaveListe = None  # Auto-detected
         self._minUddannelseUgeNote = None  # Auto-detected
@@ -587,7 +589,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 self.presence[str(child["id"])] = 1
                 self._daily_overview[str(child["id"])] = data["data"][0]
             else:
-                _LOGGER.warn(
+                _LOGGER.warning(
                     "Unable to retrieve presence data from Aula from child with id "
                     + str(child["id"])
                     + ". Some data will be missing from sensor entities."
@@ -635,7 +637,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     break
             _LOGGER.debug(f"OLD MESSAGES: Found unread messages: {unread}")
         except Exception as e:
-            _LOGGER.error(f"OLD MESSAGES: Failed to fetch messages: {e}")
+            _LOGGER.warning(f"OLD MESSAGES: Failed to fetch messages: {e}")
             self.unread_messages = 0
             unread = 0
             self.message = {}
@@ -687,7 +689,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             self.unread_messages = 1
                             break
         except Exception as e:
-            _LOGGER.error(f"OLD MESSAGES: Failed to fetch unread message details: {e}")
+            _LOGGER.warning(f"OLD MESSAGES: Failed to fetch unread message details: {e}")
             self.unread_messages = 0
 
         _LOGGER.debug("OLD MESSAGES: Section completed, continuing to Calendar...")
@@ -762,27 +764,30 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         + "&coverImageHeight=160&widgetVersion=1.6"
                         + "&userProfile=guardian"
                         + "&sessionUUID="
-                        + "aula_guardian",
+                        + widget_guardian(token),
                         headers={"Authorization": token, "accept": "application/json"},
                         verify=True,
+                        timeout=30,
                     )
 
                     if response.status_code != 200:
                         _LOGGER.warning(
                             f"Library API returned status {response.status_code}"
                         )
-                        self.loaned_books = {}
+                        self.library_available = False
                     else:
                         books = response.json()
+                        if not isinstance(books, dict) or not isinstance(books.get("loans"), list):
+                            raise ValueError("Missing loans list")
 
                         self.loaned_books = {}
                         for loaned_book in books["loans"]:
                             book = {
                                 "Title": loaned_book["title"],
-                                "Author": loaned_book["author"],
+                                "Author": loaned_book.get("author") or "",
                                 "DueDate": loaned_book["dueDate"],
                                 "NumberOfLoans": loaned_book["numberOfLoans"],
-                                "Cover": str(loaned_book["coverImageUrl"]).strip(),
+                                "Cover": str(loaned_book.get("coverImageUrl") or "").strip(),
                             }
 
                             if (
@@ -795,13 +800,14 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                                 book
                             )
 
+                        self.library_available = True
                         _LOGGER.debug(
                             f"Library books loaded. {len(self.loaned_books)} patron(s), "
                             f"{len(self._childnames)} child(ren) registered"
                         )
                 except Exception as e:
-                    _LOGGER.warning(f"Failed to fetch library data: {e}")
-                    self.loaned_books = {}
+                    self.library_available = False
+                    _LOGGER.warning("Failed to fetch library data (%s)", type(e).__name__)
 
         # End of bibliotek
 
@@ -813,7 +819,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 self.get_widgets()
 
             if "0028" not in self.widgets:
-                _LOGGER.info("Education widget (0028) not found in available widgets")
+                _LOGGER.debug("Education widget (0028) not found in available widgets")
             else:
                 # Check if any child has an institution type where education widget is appropriate
                 applicable_children = []
@@ -824,14 +830,14 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         applicable_children.append(child_id)
 
                 if not applicable_children:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         "Education widget available but not appropriate for any child's institution type"
                     )
                 else:
                     token = self.get_token("0028")
                     now = datetime.datetime.now() + datetime.timedelta(weeks=1)
-                    thisweek = datetime.datetime.now().strftime("%Y-W%W")
-                    nextweek = now.strftime("%Y-W%W")
+                    thisweek = datetime.datetime.now().strftime("%G-W%V")
+                    nextweek = now.strftime("%G-W%V")
                     self.forloebthisweek = self._minUddannelse.forloeb(
                         self._session,
                         token,
@@ -858,7 +864,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                 self.get_widgets()
 
             if "0028" not in self.widgets:
-                _LOGGER.info("Education widget (0028) not found in available widgets")
+                _LOGGER.debug("Education widget (0028) not found in available widgets")
             else:
                 # Check if any child has an institution type where education widget is appropriate
                 applicable_children = []
@@ -869,12 +875,12 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         applicable_children.append(child_id)
 
                 if not applicable_children:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         "Education widget available but not appropriate for any child's institution type"
                     )
                 else:
                     token = self.get_token("0028")
-                    week = datetime.datetime.now().strftime("%Y-W%W")
+                    week = datetime.datetime.now().strftime("%G-W%V")
                     opgaver = self._minUddannelse.opgaveListe(
                         self._session,
                         token,
@@ -905,7 +911,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
             if len(self.widgets) == 0:
                 self.get_widgets()
             if "0028" not in self.widgets:
-                _LOGGER.info("Education widget (0028) not found in available widgets")
+                _LOGGER.debug("Education widget (0028) not found in available widgets")
             else:
                 # Check if any child has an institution type where education widget is appropriate
                 applicable_children = []
@@ -916,14 +922,14 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                         applicable_children.append(child_id)
 
                 if not applicable_children:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         "Education widget available but not appropriate for any child's institution type"
                     )
                 else:
                     token = self.get_token("0028")
                     now = datetime.datetime.now() + datetime.timedelta(weeks=1)
-                    thisweek = datetime.datetime.now().strftime("%Y-W%W")
-                    nextweek = now.strftime("%Y-W%W")
+                    thisweek = datetime.datetime.now().strftime("%G-W%V")
+                    nextweek = now.strftime("%G-W%V")
 
                     try:
                         self.ugenotethisweek = self._minUddannelse.ugeBrev(
@@ -983,7 +989,7 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                     if self._institution_types[child_id] == "kindergarten"
                 )
                 if kindergarten_count > 0:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"Week plan widgets (0029,0004,0062) not found - detected {kindergarten_count} kindergarten child(ren). Week plans may use different widgets or be unavailable for kindergartens."
                     )
                 else:
@@ -1181,8 +1187,8 @@ class Client(WidgetsMixin, PresenceMixin, PostsMixin, MailMixin):
                             self.ugepnext_attr[name] = ugep
 
             now = datetime.datetime.now() + datetime.timedelta(weeks=1)
-            thisweek = datetime.datetime.now().strftime("%Y-W%W")
-            nextweek = now.strftime("%Y-W%W")
+            thisweek = datetime.datetime.now().strftime("%G-W%V")
+            nextweek = now.strftime("%G-W%V")
             ugeplan(thisweek, "this")
             ugeplan(nextweek, "next")
         # End of Ugeplaner

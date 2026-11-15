@@ -207,7 +207,7 @@ async def async_setup_entry(
                         if "0028" not in available_widgets
                         else f"not appropriate for {institution_type}"
                     )
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"Education sensor for child {child_id} skipped - {reason}"
                     )
 
@@ -230,7 +230,7 @@ async def async_setup_entry(
                         if "0028" not in available_widgets
                         else f"not appropriate for {institution_type}"
                     )
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         f"Week notes sensor for child {child_id} skipped - {reason}"
                     )
 
@@ -251,7 +251,7 @@ async def async_setup_entry(
                             if "0062" not in available_widgets
                             else f"not appropriate for {institution_type}"
                         )
-                        _LOGGER.info(
+                        _LOGGER.debug(
                             f"Reminder sensor for child {child_id} skipped - {reason}"
                         )
 
